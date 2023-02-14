@@ -550,7 +550,7 @@ static int translate_picture_device(VmafContext *vmaf, VmafPicture *pic,
 {
     int err = 0;
 
-    //if (fex_flags & VMAF_FEATURE_EXTRACTOR_CUDA) return err;
+    if (fex_flags & VMAF_FEATURE_EXTRACTOR_CUDA) return err;
 
     //device to host
 
