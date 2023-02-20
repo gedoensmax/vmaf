@@ -323,7 +323,7 @@ if is_cuda_enabled
                 '-I', '../include',
                 '-I', '../src/feature',
                 '-I', '../src/' + cuda_dir,
-            ]
+            ] + cuda_flags
         )
         ptx_files += {name : [t]}
         cuda_sources += _cu
@@ -358,7 +358,7 @@ if is_cuda_enabled
             cuda_inc,
         ],
         c_args : vmaf_cflags_common,
-        cuda_args: cuda_flags # + ['-gencode', 'arch=compute_86,code=sm_86' ] #, '--use_fast_math']
+        cuda_args: cuda_flags
     )
 
     common_cuda_objects += cuda_static_lib.extract_all_objects()
