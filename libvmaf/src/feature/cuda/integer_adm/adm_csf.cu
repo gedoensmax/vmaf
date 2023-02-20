@@ -29,8 +29,8 @@
 template <int cols_per_thread>
 static __device__ __forceinline__ void copy_vec_4(const int32_t * __restrict__ in, int32_t * __restrict__ out)
 {
-    //__builtin_assume_aligned(in, 16);
-    //__builtin_assume_aligned(out, 16);
+    __builtin_assume_aligned(in, 16);
+    __builtin_assume_aligned(out, 16);
 
     static_assert(cols_per_thread % 4 == 0, "implemented only for a multiple of 4");
 #pragma unroll
@@ -42,8 +42,8 @@ static __device__ __forceinline__ void copy_vec_4(const int32_t * __restrict__ i
 template <int cols_per_thread>
 static __device__ __forceinline__ void copy_vec_4(const int16_t * __restrict__ in, int16_t * __restrict__ out)
 {
-    // __builtin_assume_aligned(in, 8);
-    // __builtin_assume_aligned(out, 8);
+    __builtin_assume_aligned(in, 8);
+    __builtin_assume_aligned(out, 8);
 
     static_assert(cols_per_thread % 4 == 0, "implemented only for a multiple of 4");
 #pragma unroll
