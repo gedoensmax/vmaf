@@ -18,9 +18,9 @@
 
 #ifndef __VMAF_CUDA_STATE_H__
 #define __VMAF_CUDA_STATE_H__
-
+#ifndef CUDA_VERSION
 #include <cuda.h>
-
+#endif
 #ifdef __cplusplus
 extern "C" {
 #endif
