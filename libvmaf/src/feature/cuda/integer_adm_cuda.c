@@ -142,24 +142,28 @@ void adm_dwt2_16_device(AdmStateCuda *s, const uint16_t *d_picture, cuda_adm_dwt
 void adm_dwt2_s123_combined_device(AdmStateCuda *s,const int32_t *d_i4_scale, int32_t *tmp_buf, cuda_i4_adm_dwt_band_t i4_dwt,
         AdmBufferCuda *d_buf, int w, int h, int img_stride, int dst_stride, int scale, AdmFixedParametersCuda *p, CUstream cu_stream) {
     void * args_vert[] = {&d_i4_scale, &tmp_buf, &w, &h, &img_stride, &*p};
+    const int num_threads = 128;
     switch (scale) {
         case 1:
             CHECK_CUDA(cuLaunchKernel(s->func_dwt_s123_combined_vert_kernel_0_0_int32_t,
-                        DIV_ROUND_UP(w, 32), h + 1 / 2, 1,
-                        32, 1, 1,
+                        DIV_ROUND_UP(w, num_threads), h + 1 / 2, 1,
+                        num_threads, 1, 1,
                         0, cu_stream, args_vert, NULL));
             break;
         case 2:
             CHECK_CUDA(cuLaunchKernel(s->func_dwt_s123_combined_vert_kernel_32768_16_int32_t,
-                        DIV_ROUND_UP(w, 32), h + 1 / 2, 1,
-                        32, 1, 1,
+                        DIV_ROUND_UP(w, num_threads), h + 1 / 2, 1,
+                        num_threads, 1, 1,
                         0, cu_stream, args_vert, NULL));
             break;
         case 3:
-            CHECK_CUDA(cuLaunchKernel(s->func_dwt_s123_combined_vert_kernel_32768_16_int32_t,
-                        DIV_ROUND_UP(w, 32), h + 1 / 2, 1,
-                        32, 1, 1,
-                        0, cu_stream, args_vert, NULL));
+            {
+                const int reduced_threads = (num_threads / 2);
+                CHECK_CUDA(cuLaunchKernel(s->func_dwt_s123_combined_vert_kernel_32768_16_int32_t,
+                            DIV_ROUND_UP(w, reduced_threads), h + 1 / 2, 1,
+                            reduced_threads, 1, 1,
+                            0, cu_stream, args_vert, NULL));
+            }
             break;
     }
 
@@ -167,21 +171,24 @@ void adm_dwt2_s123_combined_device(AdmStateCuda *s,const int32_t *d_i4_scale, in
     switch (scale) {
         case 1:
             CHECK_CUDA(cuLaunchKernel(s->func_dwt_s123_combined_hori_kernel_16384_15,
-                        DIV_ROUND_UP(((w + 1) / 2), 32), (h + 1) / 2, 1,
-                        32, 1, 1,
+                        DIV_ROUND_UP(((w + 1) / 2), num_threads), (h + 1) / 2, 1,
+                        num_threads, 1, 1,
                         0, cu_stream, args_hori, NULL));
             break;
         case 2:
             CHECK_CUDA(cuLaunchKernel(s->func_dwt_s123_combined_hori_kernel_32768_16,
-                        DIV_ROUND_UP(((w + 1) / 2), 32), (h + 1) / 2, 1,
-                        32, 1, 1,
+                        DIV_ROUND_UP(((w + 1) / 2), num_threads), (h + 1) / 2, 1,
+                        num_threads, 1, 1,
                         0, cu_stream, args_hori, NULL));
             break;
         case 3:
-            CHECK_CUDA(cuLaunchKernel(s->func_dwt_s123_combined_hori_kernel_16384_15,
-                        DIV_ROUND_UP(((w + 1) / 2), 32), (h + 1) / 2, 1,
-                        32, 1, 1,
-                        0, cu_stream, args_hori, NULL));
+            {
+                const int reduced_threads = (num_threads / 2);
+                CHECK_CUDA(cuLaunchKernel(s->func_dwt_s123_combined_hori_kernel_16384_15,
+                            DIV_ROUND_UP(((w + 1) / 2), reduced_threads), (h + 1) / 2, 1,
+                            reduced_threads, 1, 1,
+                            0, cu_stream, args_hori, NULL));
+            }
             break;
     }
 }
