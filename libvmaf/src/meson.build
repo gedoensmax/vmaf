@@ -433,6 +433,7 @@ if is_cuda_enabled
         feature_src_dir + 'cuda/integer_vif_cuda.c',
         feature_src_dir + 'cuda/integer_motion_cuda.c',
         feature_src_dir + 'cuda/integer_psnr_cuda.c',
+        feature_src_dir + 'cuda/float_ssim_cuda.c',
     ]
 endif
 
