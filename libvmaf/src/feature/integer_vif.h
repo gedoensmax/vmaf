@@ -20,6 +20,7 @@
 #define FEATURE_VIF_H_
 
 #include <stdint.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include <assert.h>
 

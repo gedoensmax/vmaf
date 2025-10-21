@@ -22,13 +22,11 @@
 
 #include "common.h"
 
-#include <vector>
-
 #include "cuda_helper.cuh"
 
 // Calculates and returns vector with indices for dwt, if upper limit is
 // reached, the indices will be mirrored
-__device__ __forceinline__ int4 calculate_indices(const int n,
+__device__ __inline__ int4 calculate_indices(const int n,
         const int upper_limit) {
     int4 indices = make_int4(2 * n - 1, 2 * n, 2 * n + 1, 2 * n + 2);
 
@@ -55,7 +53,7 @@ __device__ __forceinline__ int4 calculate_indices(const int n,
 }
 
 template<int32_t add_shift, int16_t shift, typename T>
-__device__ __forceinline__ void dwt_s123_combined_vert_kernel(const T *d_image_scale, int32_t *tmplo_start, int w, int h, int img_stride, AdmFixedParametersCuda params) {
+__device__ __inline__ void dwt_s123_combined_vert_kernel(const T *d_image_scale, int32_t *tmplo_start, int w, int h, int img_stride, AdmFixedParametersCuda params) {
     const int idx = threadIdx.x + blockIdx.x * blockDim.x;
     const int i = blockIdx.y;
     if (idx >= w)
@@ -88,7 +86,7 @@ __device__ __forceinline__ void dwt_s123_combined_vert_kernel(const T *d_image_s
 }
 
 template<int32_t add_shift, int16_t shift>
-__device__ __forceinline__ void dwt_s123_combined_hori_kernel(cuda_i4_adm_dwt_band_t i4_dwt2, int32_t *tmplo_start, int w, int h,  int dst_stride, AdmFixedParametersCuda params) {
+__device__ __inline__ void dwt_s123_combined_hori_kernel(cuda_i4_adm_dwt_band_t i4_dwt2, int32_t *tmplo_start, int w, int h,  int dst_stride, AdmFixedParametersCuda params) {
     const int idx = threadIdx.x + blockIdx.x * blockDim.x;
     const int i = blockIdx.y;
     if (idx >= (w + 1) / 2)
@@ -143,7 +141,7 @@ __device__ __forceinline__ void dwt_s123_combined_hori_kernel(cuda_i4_adm_dwt_ba
 }
 
 template<int v_rows_per_thread, int32_t h_shift, int32_t h_add_shift, int32_t tile_width, int tile_height, typename T>
-__device__ __forceinline__ void adm_dwt2_8_vert_hori_kernel(const T * d_picture,
+__device__ __inline__ void adm_dwt2_8_vert_hori_kernel(const T * d_picture,
         cuda_adm_dwt_band_t dst,
         cuda_i4_adm_dwt_band_t i4_dwt2,
         int w, int h,
@@ -155,7 +153,7 @@ __device__ __forceinline__ void adm_dwt2_8_vert_hori_kernel(const T * d_picture,
     // The vertical pass computes a tile of size [tile_width, tile_height].
     // The horizontal pass computes a tile of size [tile_width / 2 - 2, tile_height] due to the required overlap of the tiles.
 
-    __shared__ short2 s_tile[tile_height][tile_width];
+    __shared__ ushort2 s_tile[tile_height][tile_width];
 
     const int horz_out_tile_rows = tile_height;
     const int horz_out_tile_cols = tile_width / 2 - 2;
@@ -194,7 +192,7 @@ __device__ __forceinline__ void adm_dwt2_8_vert_hori_kernel(const T * d_picture,
                 u_s[i] = d_picture[y_in * src_stride + x];
             }
 
-            short2 *s_tmp_thread = s_tile[threadIdx.y] + threadIdx.x;
+            ushort2 *s_tmp_thread = s_tile[threadIdx.y] + threadIdx.x;
 
             // accumulate items_per_thread values and store them
 #pragma unroll
@@ -215,7 +213,7 @@ __device__ __forceinline__ void adm_dwt2_8_vert_hori_kernel(const T * d_picture,
                 accum_lo -= params.dwt2_db2_coeffs_lo_sum * v_add_shift;
                 accum_hi -= params.dwt2_db2_coeffs_hi_sum * v_add_shift;
 
-                s_tile[threadIdx.y * v_rows_per_thread + item][threadIdx.x] = make_short2((accum_lo + v_add_shift) >> v_shift, (accum_hi + v_add_shift) >> v_shift);
+                s_tile[threadIdx.y * v_rows_per_thread + item][threadIdx.x] = make_ushort2((accum_lo + v_add_shift) >> v_shift, (accum_hi + v_add_shift) >> v_shift);
             }
         }
     }
@@ -244,7 +242,7 @@ __device__ __forceinline__ void adm_dwt2_8_vert_hori_kernel(const T * d_picture,
 
             int32_t accum = 0;
 
-            short2 * const tmp = s_tile[threadIdx.y * v_rows_per_thread + y_thread];
+            ushort2 * const tmp = s_tile[threadIdx.y * v_rows_per_thread + y_thread];
 
             const int32_t s0_lo = tmp[pixel.x - 2 * x_out_cta + 1].x;
             const int32_t s0_hi = tmp[pixel.x - 2 * x_out_cta + 1].y;

@@ -333,10 +333,13 @@ if is_cuda_enabled
         gencode = [
             '--cuda-gpu-arch=sm_75',
             '--cuda-device-only',
-            '-S'
-            # many complaints about device intrinsics when compiling without CTK and the ffmpeg cuda runtime header
-            #            '-nocudainc',
-            #            '-nocudalib',
+            '-m64',
+            '-O2',
+            '-S',
+            '-nocudainc',
+            '-nocudalib',
+            '-Wno-c++11-narrowing',
+            '-I', '../src/compat/cuda',
         ]
     endif
     message('CUDA gencode = @0@'.format(gencode))

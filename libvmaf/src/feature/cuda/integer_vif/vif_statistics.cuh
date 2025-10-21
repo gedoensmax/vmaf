@@ -22,7 +22,7 @@
 
 #include "common.h"
 
-__device__ __forceinline__ uint16_t get_best16_from32(uint32_t temp, int *x) {
+__device__ __inline__ uint16_t get_best16_from32(uint32_t temp, int *x) {
   int k = __clz(temp);
   k = 16 - k;
   temp = temp >> k;
@@ -30,7 +30,7 @@ __device__ __forceinline__ uint16_t get_best16_from32(uint32_t temp, int *x) {
   return temp;
 }
 
-__device__ __forceinline__ uint16_t get_best16_from64(uint64_t temp, int *x) {
+__device__ __inline__ uint16_t get_best16_from64(uint64_t temp, int *x) {
   int k = __clzll(temp);
   if (k > 48) {
     k -= 48;
@@ -50,14 +50,14 @@ __device__ __forceinline__ uint16_t get_best16_from64(uint64_t temp, int *x) {
   return (uint16_t)temp;
 }
 
-__device__ __forceinline__ uint16_t log_generate(int i) {
+__device__ __inline__ uint16_t log_generate(int i) {
   // if (i < 32767 || i >= 65536)
   //     return 0;
   return (uint16_t)roundf(log2f(float(i)) * 2048.f);
 }
 
-template <typename aligned_dtype = uint4>
-__device__ __forceinline__ void vif_statistic_calculation(
+template <typename aligned_dtype = float4>
+__device__ __inline__ void vif_statistic_calculation(
     const aligned_dtype &mu1, const aligned_dtype &mu2,
     const aligned_dtype &xx_filt, const aligned_dtype &yy_filt,
     const aligned_dtype &xy_filt, int cur_col, int w, int h,

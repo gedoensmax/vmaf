@@ -27,7 +27,7 @@ __constant__ int filter_width_d = sizeof(filter_d) / sizeof(filter_d[0]);
 __constant__ int radius = (sizeof(filter_d) / sizeof(filter_d[0])) / 2;
 
 // Device function that mirrors an idx along its valid [0,sup) range
-__device__ __forceinline__ int mirror(const int idx, const int sup)
+__device__ __inline__ int mirror(const int idx, const int sup)
 {
     int out = abs(idx);
     return (out < sup) ? out : (sup - (out - sup + 1));
@@ -85,7 +85,11 @@ __global__ void calculate_motion_score_kernel_16bpc(const VmafPicture src, VmafC
         ptrdiff_t src_stride, ptrdiff_t blurred_stride) {
 
     unsigned shift_var_y = src.bpc;
-    unsigned add_before_shift_y = pow(2, (src.bpc - 1));
+#ifdef __clang__
+    unsigned add_before_shift_y = __powf(2, (src.bpc - 1));
+#else
+    unsigned add_before_shift_y = __powf(2, (src.bpc - 1));
+#endif
     constexpr unsigned shift_var_x = 16u;
     constexpr unsigned add_before_shift_x = 32768u;
 

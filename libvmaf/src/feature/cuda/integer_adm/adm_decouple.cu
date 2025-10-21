@@ -24,7 +24,7 @@
 
 #include "cuda_helper.cuh"
 
-__device__ __forceinline__ uint16_t get_best15_from32(uint32_t temp, int *x) {
+__device__ __inline__ uint16_t get_best15_from32(uint32_t temp, int *x) {
     int k = __clz(temp); // built in for cuda
     k = 17 - k;
     temp = (temp + (1 << (k - 1))) >> k;

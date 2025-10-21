@@ -52,10 +52,10 @@ typedef struct VifStateCuda {
     VmafDictionary *feature_name_dict;
     CUfunction func_filter1d_8_vertical_kernel_uint32_t_17_9,
                func_filter1d_8_horizontal_kernel_2_17_9,
-               func_filter1d_16_vertical_kernel_uint2_17_9_0,
-               func_filter1d_16_vertical_kernel_uint2_9_5_1,
-               func_filter1d_16_vertical_kernel_uint2_5_3_2,
-               func_filter1d_16_vertical_kernel_uint2_3_0_3,
+               func_filter1d_16_vertical_kernel_int2_17_9_0,
+               func_filter1d_16_vertical_kernel_int2_9_5_1,
+               func_filter1d_16_vertical_kernel_int2_5_3_2,
+               func_filter1d_16_vertical_kernel_int2_3_0_3,
                func_filter1d_16_horizontal_kernel_2_17_9_0,
                func_filter1d_16_horizontal_kernel_2_9_5_1,
                func_filter1d_16_horizontal_kernel_2_5_3_2,
@@ -109,14 +109,14 @@ static int init_fex_cuda(VmafFeatureExtractor *fex, enum VmafPixelFormat pix_fmt
                 filter1d_module, "filter1d_8_vertical_kernel_uint32_t_17_9"));
     CHECK_CUDA(cu_f, cuModuleGetFunction(&s->func_filter1d_8_horizontal_kernel_2_17_9,
                 filter1d_module, "filter1d_8_horizontal_kernel_2_17_9"));
-    CHECK_CUDA(cu_f, cuModuleGetFunction(&s->func_filter1d_16_vertical_kernel_uint2_17_9_0,
-                filter1d_module, "filter1d_16_vertical_kernel_uint2_17_9_0"));
-    CHECK_CUDA(cu_f, cuModuleGetFunction(&s->func_filter1d_16_vertical_kernel_uint2_9_5_1,
-                filter1d_module, "filter1d_16_vertical_kernel_uint2_9_5_1"));
-    CHECK_CUDA(cu_f, cuModuleGetFunction(&s->func_filter1d_16_vertical_kernel_uint2_5_3_2,
-                filter1d_module, "filter1d_16_vertical_kernel_uint2_5_3_2"));
-    CHECK_CUDA(cu_f, cuModuleGetFunction(&s->func_filter1d_16_vertical_kernel_uint2_3_0_3,
-                filter1d_module, "filter1d_16_vertical_kernel_uint2_3_0_3"));
+    CHECK_CUDA(cu_f, cuModuleGetFunction(&s->func_filter1d_16_vertical_kernel_int2_17_9_0,
+                filter1d_module, "filter1d_16_vertical_kernel_int2_17_9_0"));
+    CHECK_CUDA(cu_f, cuModuleGetFunction(&s->func_filter1d_16_vertical_kernel_int2_9_5_1,
+                filter1d_module, "filter1d_16_vertical_kernel_int2_9_5_1"));
+    CHECK_CUDA(cu_f, cuModuleGetFunction(&s->func_filter1d_16_vertical_kernel_int2_5_3_2,
+                filter1d_module, "filter1d_16_vertical_kernel_int2_5_3_2"));
+    CHECK_CUDA(cu_f, cuModuleGetFunction(&s->func_filter1d_16_vertical_kernel_int2_3_0_3,
+                filter1d_module, "filter1d_16_vertical_kernel_int2_3_0_3"));
     CHECK_CUDA(cu_f, cuModuleGetFunction(&s->func_filter1d_16_horizontal_kernel_2_17_9_0,
                 filter1d_module, "filter1d_16_horizontal_kernel_2_17_9_0"));
     CHECK_CUDA(cu_f, cuModuleGetFunction(&s->func_filter1d_16_horizontal_kernel_2_9_5_1,
@@ -286,7 +286,7 @@ void filter1d_16(VifStateCuda *s, VifBufferCuda *buf, uint16_t* ref_in, uint16_t
 
     switch (scale) {
     case 0: {
-                CHECK_CUDA(cu_f, cuLaunchKernel(s->func_filter1d_16_vertical_kernel_uint2_17_9_0,
+                CHECK_CUDA(cu_f, cuLaunchKernel(s->func_filter1d_16_vertical_kernel_int2_17_9_0,
                             GRID_VERT_X, GRID_VERT_Y, 1,
                             BLOCK_VERT_X, BLOCK_VERT_Y, 1,
                             0, stream, args_vert, NULL));
@@ -298,7 +298,7 @@ void filter1d_16(VifStateCuda *s, VifBufferCuda *buf, uint16_t* ref_in, uint16_t
                 break;
             }
     case 1: {
-                CHECK_CUDA(cu_f, cuLaunchKernel(s->func_filter1d_16_vertical_kernel_uint2_9_5_1,
+                CHECK_CUDA(cu_f, cuLaunchKernel(s->func_filter1d_16_vertical_kernel_int2_9_5_1,
                             GRID_VERT_X, GRID_VERT_Y, 1,
                             BLOCK_VERT_X, BLOCK_VERT_Y, 1,
                             0, stream, args_vert, NULL));
@@ -310,7 +310,7 @@ void filter1d_16(VifStateCuda *s, VifBufferCuda *buf, uint16_t* ref_in, uint16_t
                 break;
             }
     case 2: {
-                CHECK_CUDA(cu_f, cuLaunchKernel(s->func_filter1d_16_vertical_kernel_uint2_5_3_2,
+                CHECK_CUDA(cu_f, cuLaunchKernel(s->func_filter1d_16_vertical_kernel_int2_5_3_2,
                             GRID_VERT_X, GRID_VERT_Y, 1,
                             BLOCK_VERT_X, BLOCK_VERT_Y, 1,
                             0, stream, args_vert, NULL));
@@ -322,7 +322,7 @@ void filter1d_16(VifStateCuda *s, VifBufferCuda *buf, uint16_t* ref_in, uint16_t
                 break;
             }
     case 3: {
-                CHECK_CUDA(cu_f, cuLaunchKernel(s->func_filter1d_16_vertical_kernel_uint2_3_0_3,
+                CHECK_CUDA(cu_f, cuLaunchKernel(s->func_filter1d_16_vertical_kernel_int2_3_0_3,
                             GRID_VERT_X, GRID_VERT_Y, 1,
                             BLOCK_VERT_X, BLOCK_VERT_Y, 1,
                             0, stream, args_vert, NULL));

@@ -24,7 +24,7 @@
 #include "cuda_helper.cuh"
 
 template <int val_per_thread, int cta_size>
-__device__ __forceinline__ void adm_csf_den_scale_line_kernel(const cuda_adm_dwt_band_t src, int h,
+__device__ __inline__ void adm_csf_den_scale_line_kernel(const cuda_adm_dwt_band_t src, int h,
         int top, int bottom, int left,
         int right, int src_stride,
         uint64_t *accum) {
@@ -67,7 +67,7 @@ __device__ __forceinline__ void adm_csf_den_scale_line_kernel(const cuda_adm_dwt
 }
 
 template <int val_per_thread, int cta_size>
-__device__ __forceinline__ void adm_csf_den_s123_line_kernel(
+__device__ __inline__ void adm_csf_den_s123_line_kernel(
         const cuda_i4_adm_dwt_band_t src, int h, int top, int bottom, int left, int right,
         int src_stride, uint32_t add_shift_sq, uint32_t shift_sq, uint64_t *accum) {
     const uint32_t shift_cub = (uint32_t)__float2uint_ru(__log2f((right - left)));

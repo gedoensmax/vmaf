@@ -1,6 +1,7 @@
 FROM ubuntu:22.04
 ARG NV_CODEC_TAG="876af32a202d0de83bd1d36fe74ee0f7fcf86b0d"
 
+ENV DEBIAN_FRONTEND=noninteractive
 # get and install building tools
 RUN apt-get update && \
     apt-get install -y \
@@ -14,9 +15,7 @@ RUN apt-get update && \
     xxd \
     clang \
     wget \
-    unzip \
-    nvidia-cuda-dev \
-    nvidia-cuda-toolkit
+    unzip
 
 # retrieve source code
 COPY . /vmaf
@@ -28,7 +27,8 @@ RUN wget https://github.com/FFmpeg/nv-codec-headers/archive/${NV_CODEC_TAG}.zip 
 
 # make vmaf
 # when disabling NVCC, libvmaf will be built without cubin's which will compile kernels at start of the container
-RUN cd /vmaf && make clean && make ENABLE_NVCC=true && make install
+RUN pip install bin2c
+RUN cd /vmaf && make clean && make ENABLE_NVCC=false && make install
 
 # install python tools
 RUN pip3 install --no-cache-dir -r /vmaf/python/requirements.txt

@@ -24,10 +24,10 @@
 
 #include "vif_statistics.cuh"
 
-template <typename alignment_type = uint2, int fwidth_0 = 17, int fwidth_1 = 9>
-__device__ __forceinline__ void filter1d_8_vertical_kernel(VifBufferCuda buf, uint8_t* ref_in, uint8_t* dis_in,
+template <typename alignment_type = int2, int fwidth_0 = 17, int fwidth_1 = 9>
+__device__ __inline__ void filter1d_8_vertical_kernel(VifBufferCuda buf, uint8_t* ref_in, uint8_t* dis_in,
         int w, int h, filter_table_stuct vif_filt_s0) {
-    using writeback_type = uint4;
+    using writeback_type = float4;
     constexpr int val_per_thread = sizeof(alignment_type);
     static_assert(val_per_thread % 4 == 0 && val_per_thread <= 16,
             "val per thread bust be divisible by 4 and under 16");
@@ -112,7 +112,7 @@ __device__ __forceinline__ void filter1d_8_vertical_kernel(VifBufferCuda buf, ui
 }
 
 template <int val_per_thread = 1, int fwidth_0 = 17, int fwidth_1 = 9>
-__device__ __forceinline__ void filter1d_8_horizontal_kernel(VifBufferCuda buf, int w, int h,
+__device__ __inline__ void filter1d_8_horizontal_kernel(VifBufferCuda buf, int w, int h,
         filter_table_stuct vif_filt_s0,
         double vif_enhn_gain_limit,
         vif_accums *accum) {
@@ -217,13 +217,13 @@ __device__ __forceinline__ void filter1d_8_horizontal_kernel(VifBufferCuda buf, 
     }
 }
 
-template <typename alignment_type = uint2, int fwidth, int fwidth_rd, int scale>
-__device__ __forceinline__ void
+template <typename alignment_type = int2, int fwidth, int fwidth_rd, int scale>
+__device__ __inline__ void
 filter1d_16_vertical_kernel(VifBufferCuda buf, uint16_t* ref_in, uint16_t* dis_in, int w, int h,
         int32_t add_shift_round_VP, int32_t shift_VP,
         int32_t add_shift_round_VP_sq, int32_t shift_VP_sq,
         filter_table_stuct vif_filt) {
-    using writeback_type = uint4;
+    using writeback_type = float4;
     constexpr int val_per_thread = sizeof(alignment_type) / sizeof(uint16_t);
     static_assert(val_per_thread % 4 == 0 && val_per_thread <= 8,
             "val per thread bust be divisible by 4 and under 16");
@@ -329,7 +329,7 @@ filter1d_16_vertical_kernel(VifBufferCuda buf, uint16_t* ref_in, uint16_t* dis_i
 }
 
 template <int val_per_thread = 2, int fwidth, int fwidth_rd, int scale>
-__device__ __forceinline__ void
+__device__ __inline__ void
 filter1d_16_horizontal_kernel(VifBufferCuda buf, int w, int h,
         int32_t add_shift_round_HP, int32_t shift_HP,
         filter_table_stuct vif_filt,
@@ -488,10 +488,10 @@ extern "C" {
     // constexpr int fwidth[4] = {17, 9, 5, 3};
     FILTER1D_8_VERT(uint32_t, 17, 9);   // filter1d_8_vertical_kernel_uint32_t_17_9
     FILTER1D_8_HORI(2, 17, 9);          // filter1d_8_horizontal_kernel_2_17_9
-    FILTER1D_16_VERT(uint2, 17, 9, 0);  // filter1d_16_vertical_kernel_uint2_17_9_0
-    FILTER1D_16_VERT(uint2, 9, 5, 1);   // filter1d_16_vertical_kernel_uint2_9_5_1
-    FILTER1D_16_VERT(uint2, 5, 3, 2);   // filter1d_16_vertical_kernel_uint2_5_3_2
-    FILTER1D_16_VERT(uint2, 3, 0, 3);   // filter1d_16_vertical_kernel_uint2_3_0_3
+    FILTER1D_16_VERT(int2, 17, 9, 0);  // filter1d_16_vertical_kernel_int2_17_9_0
+    FILTER1D_16_VERT(int2, 9, 5, 1);   // filter1d_16_vertical_kernel_int2_9_5_1
+    FILTER1D_16_VERT(int2, 5, 3, 2);   // filter1d_16_vertical_kernel_int2_5_3_2
+    FILTER1D_16_VERT(int2, 3, 0, 3);   // filter1d_16_vertical_kernel_int2_3_0_3
 
     FILTER1D_16_HORI(2, 17, 9, 0);      // filter1d_16_horizontal_kernel_2_17_9_0
     FILTER1D_16_HORI(2, 9, 5, 1);       // filter1d_16_horizontal_kernel_2_9_5_1

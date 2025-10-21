@@ -22,19 +22,18 @@
 
 #ifdef DEVICE_CODE
 #include <cstdint>
-#ifndef __clang__
 #include <cuda_runtime.h>
-#endif
 #endif
 
 #include "assert.h"
 #include "stdio.h"
-#include <ffnvcodec/dynlink_loader.h>
 
 #define DIV_ROUND_UP(x, y) (((x) + (y)-1) / (y))
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 
+#ifndef DEVICE_CODE
+#include <ffnvcodec/dynlink_loader.h>
 #define CHECK_CUDA(funcs, CALL)                                                 \
     do {                                                                        \
         const CUresult cu_err = funcs->CALL;                                    \
@@ -45,20 +44,21 @@
             assert(0);                                                          \
         }                                                                       \
     } while (0)
+#endif
 
 #ifdef DEVICE_CODE
 namespace {
-    __forceinline__ __device__ int64_t warp_reduce(int64_t x) {
+    __inline__ __device__ int64_t warp_reduce(int64_t x) {
 #pragma unroll
-        for (int i = 16; i > 0; i >>= 1) {
-            x += int64_t(__shfl_down_sync(0xffffffff, x & 0xffffffff, i)) |
-                int64_t(__shfl_down_sync(0xffffffff, x >> 32, i) << 32);
+        for (unsigned i = 16; i > 0; i >>= 1) {
+            x += int64_t(__shfl_down_sync(0xffffffff, unsigned(x & 0xffffffff), i)) |
+                (int64_t(__shfl_down_sync(0xffffffff, unsigned(x >> 32), i)) << 32);
         }
         return x;
     }
 
     typedef unsigned long long int uint64_cu;
-    __forceinline__ __device__ int64_t atomicAdd_int64(int64_t *address,
+    __inline__ __device__ int64_t atomicAdd_int64(int64_t *address,
             int64_t val) {
         return atomicAdd(reinterpret_cast<uint64_cu *>(address),
                 static_cast<uint64_cu>(val));

@@ -24,6 +24,8 @@
 #include "integer_adm.h"
 #include "log.h"
 
+#include <math.h>
+
 #if ARCH_X86
 #include "x86/adm_avx2.h"
 #elif ARCH_AARCH64

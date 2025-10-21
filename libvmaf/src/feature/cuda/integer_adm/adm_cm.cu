@@ -21,11 +21,12 @@
 #include "common.h"
 #include "cuda_helper.cuh"
 
+#ifndef __clang__
 #include <algorithm>
-
 //#define COMPARE_FUSED_SPLIT
 #if defined(COMPARE_FUSED_SPLIT)
 #include <iostream>
+#endif
 #endif
 
 extern "C" {
@@ -125,7 +126,7 @@ struct WarpShift
 };
 
 template <int rows_per_thread>
-__device__ __forceinline__ void adm_cm_line_kernel(AdmBufferCuda buf, int h, int w, int top,
+__device__ __inline__ void adm_cm_line_kernel(AdmBufferCuda buf, int h, int w, int top,
         int bottom, int left, int right,
         int start_row, int end_row, int start_col,
         int end_col, int src_stride,
@@ -233,7 +234,7 @@ __device__ __forceinline__ void adm_cm_line_kernel(AdmBufferCuda buf, int h, int
     // accumulate per thread
     for (int row = 0;row < rows_per_thread;++row) {
         int32_t accum_thread = accum_thread_reg[row];
-        const int32_t x_sq = (int32_t)((((int64_t)accum_thread * accum_thread) + add_shift_sq >> shift_sq));
+        const int32_t x_sq = (int32_t)(((((int64_t)accum_thread * accum_thread) + add_shift_sq) >> shift_sq));
         accum += (((int64_t)x_sq * accum_thread) + add_shift_cub) >> shift_cub;
     }
 
@@ -249,7 +250,7 @@ __device__ __forceinline__ void adm_cm_line_kernel(AdmBufferCuda buf, int h, int
 }
 
 template <int val_per_thread>
-__device__ __forceinline__ void adm_cm_reduce_line_kernel(int h, int w, int scale, int buffer_h,
+__device__ __inline__ void adm_cm_reduce_line_kernel(int h, int w, int scale, int buffer_h,
         int buffer_stride,
         const int32_t *buffer,
         int64_t *accum) {

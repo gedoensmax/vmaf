@@ -27,7 +27,7 @@
 #include "cuda_helper.cuh"
 
 template <int cols_per_thread>
-static __device__ __forceinline__ void copy_vec_4(const int32_t * __restrict__ in, int32_t * __restrict__ out)
+static __device__ __inline__ void copy_vec_4(const int32_t * __restrict__ in, int32_t * __restrict__ out)
 {
     //__builtin_assume_aligned(in, 16);
     //__builtin_assume_aligned(out, 16);
@@ -35,12 +35,12 @@ static __device__ __forceinline__ void copy_vec_4(const int32_t * __restrict__ i
     static_assert(cols_per_thread % 4 == 0, "implemented only for a multiple of 4");
 #pragma unroll
     for (int col = 0;col <cols_per_thread;col += 4) {
-        *reinterpret_cast<uint4*>(out + col) = *reinterpret_cast<const uint4*>(in + col);
+        *reinterpret_cast<float4*>(out + col) = *reinterpret_cast<const float4*>(in + col);
     }
 }
 
 template <int cols_per_thread>
-static __device__ __forceinline__ void copy_vec_4(const int16_t * __restrict__ in, int16_t * __restrict__ out)
+static __device__ __inline__ void copy_vec_4(const int16_t * __restrict__ in, int16_t * __restrict__ out)
 {
     // __builtin_assume_aligned(in, 8);
     // __builtin_assume_aligned(out, 8);
@@ -53,7 +53,7 @@ static __device__ __forceinline__ void copy_vec_4(const int16_t * __restrict__ i
 }
 
 template <int rows_per_thread, int cols_per_thread>
-__device__ __forceinline__ void i4_adm_csf_kernel(AdmBufferCuda buf, int scale, int top,
+__device__ __inline__ void i4_adm_csf_kernel(AdmBufferCuda buf, int scale, int top,
         int bottom, int left, int right, int stride,
         AdmFixedParametersCuda params) {
 
@@ -101,7 +101,7 @@ __constant__ const uint8_t i_shifts[4] = {0, 15, 15, 17};
 __constant__ const uint16_t i_shiftsadd[4] = {0, 16384, 16384, 65535};
 
 template <int rows_per_thread, int cols_per_thread>
-__device__ __forceinline__ void adm_csf_kernel(AdmBufferCuda buf, int top, int bottom, int left,
+__device__ __inline__ void adm_csf_kernel(AdmBufferCuda buf, int top, int bottom, int left,
         int right, int stride,
         AdmFixedParametersCuda params) {
     const int band = blockIdx.z + 1;
