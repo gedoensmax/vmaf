@@ -28,4 +28,10 @@
 #endif
 #define RESTRICT __restrict
 
+#ifdef _WIN32
+    #define PATH_SEPARATOR '\\'
+#else
+    #define PATH_SEPARATOR '/'
+#endif
+
 #endif // MACROS_H_

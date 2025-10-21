@@ -385,19 +385,17 @@ static char *test_calculate_c_values()
     const uint16_t num_diffs = 4;
     uint16_t histograms[4*1032];
 
-    uint16_t *diffs_to_consider = NULL;
-    int *diff_weights = NULL;
-    int *all_diffs = NULL;
+    CambiBuffers buffers;
     int err = 0;
 
-    set_contrast_arrays(num_diffs, &diffs_to_consider, &diff_weights, &all_diffs);
+    set_contrast_arrays(num_diffs, &buffers);
     err |= get_sample_image(&input, 0);
     mu_assert("test_calculate_c_values alloc #1 error", !err);
     err |= get_sample_image(&mask, 8);
     mu_assert("test_calculate_c_values alloc #2 error", !err);
 
     calculate_c_values(&input, &mask, combined_c_values, histograms, window_size,
-                       num_diffs, tvi_for_diff, vlt_luma, diff_weights, all_diffs, width, height,
+                       num_diffs, tvi_for_diff, vlt_luma, buffers.diff_weights, buffers.all_diffs, width, height,
                        increment_range, decrement_range);
 
     for (unsigned i=0; i<16; i++) {
@@ -414,7 +412,7 @@ static char *test_calculate_c_values()
     window_size = 9;
     uint16_t histograms_8x8[8*1032];
     calculate_c_values(&input_8x8, &mask_8x8, combined_c_values_8x8, histograms_8x8,
-                       window_size, num_diffs, tvi_for_diff, vlt_luma, diff_weights, all_diffs, 8, 8,
+                       window_size, num_diffs, tvi_for_diff, vlt_luma, buffers.diff_weights, buffers.all_diffs, 8, 8,
                        increment_range, decrement_range);
 
     double sum = 0;
@@ -428,9 +426,9 @@ static char *test_calculate_c_values()
     vmaf_picture_unref(&input_8x8);
     vmaf_picture_unref(&mask_8x8);
 
-    aligned_free(diffs_to_consider);
-    aligned_free(diff_weights);
-    aligned_free(all_diffs);
+    aligned_free(buffers.diffs_to_consider);
+    aligned_free(buffers.diff_weights);
+    aligned_free(buffers.all_diffs);
 
     return NULL;
 }
@@ -661,9 +659,7 @@ static char *test_tvi_condition()
 
 static char *test_set_contrast_arrays()
 {
-    uint16_t *diffs_to_consider = NULL;
-    int *diffs_weights = NULL;
-    int *all_diffs = NULL;
+    CambiBuffers buffers;
 
     int max_log_diff = 2;
     int expected_diffs_to_consider_4[4] = {1, 2, 3, 4};
@@ -671,23 +667,23 @@ static char *test_set_contrast_arrays()
     int expected_all_diffs_4[9] = {-4, -3, -2, -1, 0, 1, 2, 3, 4};
 
     int num_diffs = (1<<max_log_diff);
-    set_contrast_arrays(num_diffs, &diffs_to_consider, &diffs_weights, &all_diffs);
+    set_contrast_arrays(num_diffs, &buffers);
 
     for (int i=0; i < num_diffs; i++) {
         mu_assert("set_contrast_arrays max_log_diff 2, error at diffs_to_consider",
-                   expected_diffs_to_consider_4[i] == diffs_to_consider[i]);
+                   expected_diffs_to_consider_4[i] == buffers.diffs_to_consider[i]);
         mu_assert("set_contrast_arrays max_log_diff 2, error at diffs_weights",
-                   expected_diffs_weights_4[i] == diffs_weights[i]);
+                   expected_diffs_weights_4[i] == buffers.diff_weights[i]);
     }
 
     for (int i=0; i < 2*num_diffs + 1; i++) {
         mu_assert("set_contrast_arrays max_log_diff 2, error at all_diffs",
-                   expected_all_diffs_4[i] == all_diffs[i]);
+                   expected_all_diffs_4[i] == buffers.all_diffs[i]);
     }
 
-    aligned_free(diffs_to_consider);
-    aligned_free(diffs_weights);
-    aligned_free(all_diffs);
+    aligned_free(buffers.diffs_to_consider);
+    aligned_free(buffers.diff_weights);
+    aligned_free(buffers.all_diffs);
 
     max_log_diff = 3;
     int expected_diffs_to_consider_8[8] = {1, 2, 3, 4, 5, 6, 7, 8};
@@ -695,23 +691,23 @@ static char *test_set_contrast_arrays()
     int expected_all_diffs_8[17] = {-8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8};
 
     num_diffs = (1<<max_log_diff);
-    set_contrast_arrays(num_diffs, &diffs_to_consider, &diffs_weights, &all_diffs);
+    set_contrast_arrays(num_diffs, &buffers);
 
     for (int i=0; i < num_diffs; i++) {
         mu_assert("set_contrast_arrays max_log_diff 3, error at diffs_to_consider",
-                   expected_diffs_to_consider_8[i] == diffs_to_consider[i]);
+                   expected_diffs_to_consider_8[i] == buffers.diffs_to_consider[i]);
         mu_assert("set_contrast_arrays max_log_diff 3, error at diffs_weights",
-                   expected_diffs_weights_8[i] == diffs_weights[i]);
+                   expected_diffs_weights_8[i] == buffers.diff_weights[i]);
     }
 
     for (int i=0; i < 2*num_diffs + 1; i++) {
         mu_assert("set_contrast_arrays max_log_diff 3, error at all_diffs",
-                   expected_all_diffs_8[i] == all_diffs[i]);
+                   expected_all_diffs_8[i] == buffers.all_diffs[i]);
     }
 
-    aligned_free(diffs_to_consider);
-    aligned_free(diffs_weights);
-    aligned_free(all_diffs);
+    aligned_free(buffers.diffs_to_consider);
+    aligned_free(buffers.diff_weights);
+    aligned_free(buffers.all_diffs);
 
     return NULL;
 }

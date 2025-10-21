@@ -30,51 +30,11 @@
 #include "mem.h"
 #include "mkdirp.h"
 #include "picture.h"
+#include "cambi.h"
 
 #if ARCH_X86
 #include "x86/cambi_avx2.h"
 #endif
-
-/* Ratio of pixels for computation, must be 0 < topk <= 1.0 */
-#define DEFAULT_CAMBI_TOPK_POOLING (0.6)
-
-/* Window size to compute CAMBI: 65 corresponds to approximately 1 degree at 4k scale */
-#define DEFAULT_CAMBI_WINDOW_SIZE (65)
-
-/* Visibility threshold for luminance ΔL < tvi_threshold*L_mean for BT.1886 */
-#define DEFAULT_CAMBI_TVI (0.019)
-
-/* Luminance value below which we assume any banding is not visible */
-#define DEFAULT_CAMBI_VLT (0.0)
-
-/* Max log contrast luma levels */
-#define DEFAULT_CAMBI_MAX_LOG_CONTRAST (2)
-
-/* If true, CAMBI will be run in full-reference mode and will use both the reference and distorted inputs */
-#define DEFAULT_CAMBI_FULL_REF_FLAG (false)
-
-/* EOTF to use for the visibility threshold calculations. One of ['bt1886', 'pq']. Default: 'bt1886'. */
-#define DEFAULT_CAMBI_EOTF ("bt1886")
-
-/* CAMBI speed-up for resolutions >=1080p by down-scaling right after the sptial mask */
-#define DEFAULT_CAMBI_HIGH_RES_SPEEDUP (0)
-#define CAMBI_HIGH_RES_SPEEDUP_THRESHOLD_1080p (1920 * 1080)
-#define CAMBI_HIGH_RES_SPEEDUP_THRESHOLD_1440p (2560 * 1440)
-#define CAMBI_HIGH_RES_SPEEDUP_THRESHOLD_2160p (3840 * 2160)
-
-#define CAMBI_MIN_WIDTH_HEIGHT (216)
-#define CAMBI_4K_WIDTH (3840)
-#define CAMBI_4K_HEIGHT (2160)
-
-/* Default maximum value allowed for CAMBI */
-#define DEFAULT_CAMBI_MAX_VAL (1000.0)
-
-#define NUM_SCALES 5
-static const int g_scale_weights[NUM_SCALES] = {16, 8, 4, 2, 1};
-
-/* Suprathreshold contrast response */
-static const int g_contrast_weights[32] = {1, 2, 3, 4, 4, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8,
-                                           8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9};
 
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
@@ -86,230 +46,6 @@ static const int g_contrast_weights[32] = {1, 2, 3, 4, 4, 5, 5, 6, 6, 6, 6, 7, 7
         y = temp;         \
     }
 
-#define PICS_BUFFER_SIZE 2
-#define MASK_FILTER_SIZE 7
-
-typedef struct CambiBuffers {
-    float *c_values;
-    uint32_t *mask_dp;
-    uint16_t *c_values_histograms;
-    uint16_t *filter_mode_buffer;
-    uint16_t *diffs_to_consider;
-    uint16_t *tvi_for_diff;
-    uint16_t *derivative_buffer;
-    int *diff_weights;
-    int *all_diffs;
-} CambiBuffers;
-
-typedef void (*VmafRangeUpdater)(uint16_t *arr, int left, int right);
-typedef void (*VmafDerivativeCalculator)(const uint16_t *image_data, uint16_t *derivative_buffer, int width, int height, int row, int stride);
-
-typedef struct CambiState {
-    VmafPicture pics[PICS_BUFFER_SIZE];
-    unsigned enc_width;
-    unsigned enc_height;
-    unsigned enc_bitdepth;
-    unsigned src_width;
-    unsigned src_height;
-    uint16_t window_size;
-    uint16_t src_window_size;
-    double topk;
-    double cambi_topk;
-    double tvi_threshold;
-    double cambi_max_val;
-    double cambi_vis_lum_threshold;
-    uint16_t vlt_luma;
-    uint16_t max_log_contrast;
-    char *heatmaps_path;
-    char *eotf;
-    bool full_ref;
-    int cambi_high_res_speedup;
-
-    FILE *heatmaps_files[NUM_SCALES];
-    VmafRangeUpdater inc_range_callback;
-    VmafRangeUpdater dec_range_callback;
-    VmafDerivativeCalculator derivative_callback;
-    CambiBuffers buffers;
-    VmafDictionary *feature_name_dict;
-} CambiState;
-
-static const VmafOption options[] = {
-    {
-        .name = "cambi_max_val",
-        .help = "maximum value allowed; larger values will be clipped to this value",
-        .offset = offsetof(CambiState, cambi_max_val),
-        .type = VMAF_OPT_TYPE_DOUBLE,
-        .default_val.d = DEFAULT_CAMBI_MAX_VAL,
-        .min = 0.0,
-        .max = 1000.0,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "cmxv",
-    },
-    {
-        .name = "enc_width",
-        .help = "Encoding width",
-        .offset = offsetof(CambiState, enc_width),
-        .type = VMAF_OPT_TYPE_INT,
-        .default_val.i = 0,
-        .min = 180,
-        .max = 7680,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "encw",
-    },
-    {
-        .name = "enc_height",
-        .help = "Encoding height",
-        .offset = offsetof(CambiState, enc_height),
-        .type = VMAF_OPT_TYPE_INT,
-        .default_val.i = 0,
-        .min = 150,
-        .max = 7680,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "ench",
-    },
-    {
-        .name = "enc_bitdepth",
-        .help = "Encoding bitdepth",
-        .offset = offsetof(CambiState, enc_bitdepth),
-        .type = VMAF_OPT_TYPE_INT,
-        .default_val.i = 0,
-        .min = 6,
-        .max = 16,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "encbd",
-    },
-    {
-        .name = "src_width",
-        .help = "Source width. Only used when full_ref=true.",
-        .offset = offsetof(CambiState, src_width),
-        .type = VMAF_OPT_TYPE_INT,
-        .default_val.i = 0,
-        .min = 320,
-        .max = 7680,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "srcw",
-    },
-    {
-        .name = "src_height",
-        .help = "Source height. Only used when full_ref=true.",
-        .offset = offsetof(CambiState, src_height),
-        .type = VMAF_OPT_TYPE_INT,
-        .default_val.i = 0,
-        .min = 200,
-        .max = 4320,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "srch",
-    },
-    {
-        .name = "window_size",
-        .help = "Window size to compute CAMBI: 65 corresponds to ~1 degree at 4k",
-        .offset = offsetof(CambiState, window_size),
-        .type = VMAF_OPT_TYPE_INT,
-        .default_val.i = DEFAULT_CAMBI_WINDOW_SIZE,
-        .min = 15,
-        .max = 127,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "ws",
-    },
-    {
-        .name = "topk",
-        .help = "Ratio of pixels for the spatial pooling computation, must be 0 < topk <= 1.0",
-        .offset = offsetof(CambiState, topk),
-        .type = VMAF_OPT_TYPE_DOUBLE,
-        .default_val.d = DEFAULT_CAMBI_TOPK_POOLING,
-        .min = 0.0001,
-        .max = 1.0,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-    },
-    {
-        .name = "cambi_topk",
-        .help = "Ratio of pixels for the spatial pooling computation, must be 0 < cambi_topk <= 1.0",
-        .offset = offsetof(CambiState, cambi_topk),
-        .type = VMAF_OPT_TYPE_DOUBLE,
-        .default_val.d = DEFAULT_CAMBI_TOPK_POOLING,
-        .min = 0.0001,
-        .max = 1.0,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "ctpk",
-    },
-    {
-        .name = "tvi_threshold",
-        .help = "Visibilty threshold for luminance ΔL < tvi_threshold*L_mean",
-        .offset = offsetof(CambiState, tvi_threshold),
-        .type = VMAF_OPT_TYPE_DOUBLE,
-        .default_val.d = DEFAULT_CAMBI_TVI,
-        .min = 0.0001,
-        .max = 1.0,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "tvit",
-    },
-    {
-        .name = "cambi_vis_lum_threshold",
-        .help = "Luminance value below which we assume any banding is not visible",
-        .offset = offsetof(CambiState, cambi_vis_lum_threshold),
-        .type = VMAF_OPT_TYPE_DOUBLE,
-        .default_val.d = DEFAULT_CAMBI_VLT,
-        .min = 0.0,
-        .max = 300.0,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "vlt",
-    },
-    {
-        .name = "max_log_contrast",
-        .help = "Maximum contrast in log luma level (2^max_log_contrast) at 10-bits, "
-                "e.g., 2 is equivalent to 4 luma levels at 10-bit and 1 luma level at 8-bit. "
-                "From 0 to 5: default 2 is recommended for banding from compression.",
-        .offset = offsetof(CambiState, max_log_contrast),
-        .type = VMAF_OPT_TYPE_INT,
-        .default_val.i = DEFAULT_CAMBI_MAX_LOG_CONTRAST,
-        .min = 0,
-        .max = 5,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "mlc",
-    },
-    {
-        .name = "heatmaps_path",
-        .help = "Path where heatmaps will be dumped.",
-        .offset = offsetof(CambiState, heatmaps_path),
-        .type = VMAF_OPT_TYPE_STRING,
-        .default_val.s = NULL,
-    },
-    {
-        .name = "full_ref",
-        .help = "If true, CAMBI will be run in full-reference mode and will be computed on both the reference and distorted inputs",
-        .offset = offsetof(CambiState, full_ref),
-        .type = VMAF_OPT_TYPE_BOOL,
-        .default_val.b = DEFAULT_CAMBI_FULL_REF_FLAG,
-    },
-    {
-        .name = "eotf",
-        .help = "Determines the EOTF used to compute the visibility thresholds. Possible values: ['bt1886', 'pq']. Default: 'bt1886'",
-        .offset = offsetof(CambiState, eotf),
-        .type = VMAF_OPT_TYPE_STRING,
-        .default_val.s = DEFAULT_CAMBI_EOTF,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-    },
-    {
-        .name = "cambi_high_res_speedup",
-        .help = "Speed up the processing by downsampling post spatial mask for resolutions >= 1080p. "
-                "Min speed-up resolution possible values: [1080, 1440, 2160, 0]. Default: 0 (not applied)"
-                "Note some loss of accuracy is expected with this speedup.",
-        .offset = offsetof(CambiState, cambi_high_res_speedup),
-        .type = VMAF_OPT_TYPE_INT,
-        .default_val.i = DEFAULT_CAMBI_HIGH_RES_SPEEDUP,
-        .min = 0,
-        .max = CAMBI_4K_HEIGHT,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "hrs",
-    },
-    { 0 }
-};
-
-enum CambiTVIBisectFlag {
-    CAMBI_TVI_BISECT_TOO_SMALL,
-    CAMBI_TVI_BISECT_CORRECT,
-    CAMBI_TVI_BISECT_TOO_BIG
-};
 
 static FORCE_INLINE inline int clip(int value, int low, int high) {
     return value < low ? low : (value > high ? high : value);
@@ -395,25 +131,27 @@ static FORCE_INLINE inline void adjust_window_size(uint16_t *window_size,
     *window_size |= 1;
 }
 
-static int set_contrast_arrays(const uint16_t num_diffs, uint16_t **diffs_to_consider,
-                               int **diffs_weights, int **all_diffs)
+static int set_contrast_arrays(const uint16_t num_diffs, CambiBuffers* buffers)
 {
-    *diffs_to_consider = aligned_malloc(ALIGN_CEIL(sizeof(uint16_t)) * num_diffs, 16);
-    if (!(*diffs_to_consider)) return -ENOMEM;
+    buffers->diffs_to_consider_size = ALIGN_CEIL(sizeof(uint16_t)) * num_diffs;
+    buffers->diffs_to_consider = aligned_malloc(buffers->diffs_to_consider_size, 16);
+    if (!buffers->diffs_to_consider) return -ENOMEM;
 
-    *diffs_weights = aligned_malloc(ALIGN_CEIL(sizeof(int)) * num_diffs, 32);
-    if (!(*diffs_weights)) return -ENOMEM;
+    buffers->diff_weights_size = ALIGN_CEIL(sizeof(int)) * num_diffs;
+    buffers->diff_weights = aligned_malloc(buffers->diff_weights_size, 32);
+    if (!(buffers->diff_weights)) return -ENOMEM;
 
-    *all_diffs = aligned_malloc(ALIGN_CEIL(sizeof(int)) * (2 * num_diffs + 1), 32);
-    if (!(*all_diffs)) return -ENOMEM;
+    buffers->all_diffs_size = ALIGN_CEIL(sizeof(int)) * (2 * num_diffs + 1);
+    buffers->all_diffs = aligned_malloc(buffers->all_diffs_size, 32);
+    if (!buffers->all_diffs) return -ENOMEM;
 
-    for (int d = 0; d < num_diffs; d++) {
-        (*diffs_to_consider)[d] = d + 1;
-        (*diffs_weights)[d] = g_contrast_weights[d];
+    for (uint16_t d = 0; d < num_diffs; d++) {
+        buffers->diffs_to_consider[d] = d + (uint16_t)1;
+        buffers->diff_weights[d] = g_contrast_weights[d];
     }
 
     for (int d = -num_diffs; d <= num_diffs; d++)
-        (*all_diffs)[d + num_diffs] = d;
+        buffers->all_diffs[d + num_diffs] = d;
 
     return 0;
 }
@@ -437,12 +175,6 @@ static void get_derivative_data_for_row(const uint16_t *image_data, uint16_t *de
         derivative_buffer[col] = horizontal_derivative && vertical_derivative;
     }
 }
-
-#ifdef _WIN32
-    #define PATH_SEPARATOR '\\'
-#else
-    #define PATH_SEPARATOR '/'
-#endif
 
 static int init(VmafFeatureExtractor *fex, enum VmafPixelFormat pix_fmt,
                 unsigned bpc, unsigned w, unsigned h) {
@@ -518,7 +250,7 @@ static int init(VmafFeatureExtractor *fex, enum VmafPixelFormat pix_fmt,
 
     const int num_diffs = 1 << s->max_log_contrast;
 
-    set_contrast_arrays(num_diffs, &s->buffers.diffs_to_consider, &s->buffers.diff_weights, &s->buffers.all_diffs);
+    set_contrast_arrays(num_diffs, &s->buffers);
 
     VmafLumaRange luma_range;
     err = vmaf_luminance_init_luma_range(&luma_range, 10, VMAF_PIXEL_RANGE_LIMITED);
@@ -528,7 +260,8 @@ static int init(VmafFeatureExtractor *fex, enum VmafPixelFormat pix_fmt,
     err = vmaf_luminance_init_eotf(&eotf, s->eotf);
     if (err) return err;
 
-    s->buffers.tvi_for_diff = aligned_malloc(ALIGN_CEIL(sizeof(uint16_t)) * num_diffs, 16);
+    s->buffers.tvi_for_diff_size = ALIGN_CEIL(sizeof(uint16_t)) * num_diffs;
+    s->buffers.tvi_for_diff = aligned_malloc(s->buffers.tvi_for_diff_size, 16);
     if (!s->buffers.tvi_for_diff) return -ENOMEM;
     for (int d = 0; d < num_diffs; d++) {
         s->buffers.tvi_for_diff[d] = get_tvi_for_diff(s->buffers.diffs_to_consider[d], s->tvi_threshold, 10, luma_range, eotf);
@@ -541,22 +274,27 @@ static int init(VmafFeatureExtractor *fex, enum VmafPixelFormat pix_fmt,
     s->src_window_size = s->window_size;
     adjust_window_size(&s->window_size, s->enc_width, s->enc_height, (bool) s->cambi_high_res_speedup);
     adjust_window_size(&s->src_window_size, s->src_width, s->src_height, (bool) s->cambi_high_res_speedup);
-    s->buffers.c_values = aligned_malloc(ALIGN_CEIL(alloc_w * sizeof(float)) * alloc_h, 32);
+    s->buffers.c_values_size = ALIGN_CEIL(alloc_w * sizeof(float)) * alloc_h;
+    s->buffers.c_values = aligned_malloc(s->buffers.c_values_size, 32);
     if (!s->buffers.c_values) return -ENOMEM;
 
     const uint16_t num_bins = 1024 + (s->buffers.all_diffs[2 * num_diffs] - s->buffers.all_diffs[0]);
-    s->buffers.c_values_histograms = aligned_malloc(ALIGN_CEIL(alloc_w * num_bins * sizeof(uint16_t)), 32);
+    s->buffers.c_values_histograms_size = ALIGN_CEIL(alloc_w * num_bins * sizeof(uint16_t));
+    s->buffers.c_values_histograms = aligned_malloc(s->buffers.c_values_histograms_size, 32);
     if (!s->buffers.c_values_histograms) return -ENOMEM;
 
     int pad_size = MASK_FILTER_SIZE >> 1;
     int dp_width = alloc_w + 2 * pad_size + 1;
     int dp_height = 2 * pad_size + 2;
 
-    s->buffers.mask_dp = aligned_malloc(ALIGN_CEIL(dp_height * dp_width * sizeof(uint32_t)), 32);
+    s->buffers.mask_dp_size = ALIGN_CEIL(dp_height * dp_width * sizeof(uint32_t));
+    s->buffers.mask_dp = aligned_malloc(s->buffers.mask_dp_size, 32);
     if (!s->buffers.mask_dp) return -ENOMEM;
-    s->buffers.filter_mode_buffer = aligned_malloc(ALIGN_CEIL(3 * alloc_w * sizeof(uint16_t)), 32);
+    s->buffers.filter_mode_buffer_size = ALIGN_CEIL(3 * alloc_w * sizeof(uint16_t));
+    s->buffers.filter_mode_buffer = aligned_malloc(s->buffers.filter_mode_buffer_size, 32);
     if (!s->buffers.filter_mode_buffer) return -ENOMEM;
-    s->buffers.derivative_buffer = aligned_malloc(ALIGN_CEIL(alloc_w * sizeof(uint16_t)), 32);
+    s->buffers.derivative_buffer_size = ALIGN_CEIL(alloc_w * sizeof(uint16_t));
+    s->buffers.derivative_buffer = aligned_malloc(s->buffers.derivative_buffer_size, 32);
     if (!s->buffers.derivative_buffer) return -ENOMEM;
 
     if (s->heatmaps_path) {
@@ -1340,7 +1078,7 @@ static int extract(VmafFeatureExtractor *fex,
     return 0;
 }
 
-static int close_cambi(VmafFeatureExtractor *fex) {
+static int close(VmafFeatureExtractor *fex) {
     CambiState *s = fex->priv;
 
     int err = 0;
@@ -1369,17 +1107,13 @@ static int close_cambi(VmafFeatureExtractor *fex) {
     return err;
 }
 
-static const char *provided_features[] = {
-    "Cambi_feature_cambi_score",
-    NULL
-};
 
 VmafFeatureExtractor vmaf_fex_cambi = {
     .name = "cambi",
     .init = init,
     .extract = extract,
     .options = options,
-    .close = close_cambi,
+    .close = close,
     .priv_size = sizeof(CambiState),
     .provided_features = provided_features,
 };
