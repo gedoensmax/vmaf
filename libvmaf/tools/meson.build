@@ -4,7 +4,7 @@ if cc.has_function('strsep')
 endif
 
 vmaf = executable(
-    'vmaf',
+    'vmaf_tool',
     ['vmaf.c', 'cli_parse.c', 'y4m_input.c', 'vidinput.c', 'yuv_input.c'],
     include_directories : [libvmaf_inc, vmaf_include],
     dependencies: [stdatomic_dependency, cuda_dependency],

@@ -301,6 +301,7 @@ if is_cuda_enabled
         'adm_decouple' : [feature_src_dir + 'cuda/integer_adm/adm_decouple.cu'],
         'filter1d' : [feature_src_dir + 'cuda/integer_vif/filter1d.cu'],
         'motion_score' : [feature_src_dir + 'cuda/integer_motion/motion_score.cu'],
+        'cambi' : [feature_src_dir + 'cuda/cambi/cambi.cu'],
     }
     message(cuda_cu_sources)
     cuda_sources = [
@@ -338,7 +339,13 @@ if is_cuda_enabled
         else
             gencode += '-gencode=arch=compute_80,code=compute_80'
         endif
-
+        if get_option('buildtype') == 'debug'
+            gencode += ['-G']
+        else
+            if is_nvtx_enabled or get_option('buildtype') == 'debugoptimized'
+                gencode += ['-lineinfo']
+            endif
+        endif
     else
         nvcc_exe = find_program('clang')
         gencode = [
@@ -352,18 +359,15 @@ if is_cuda_enabled
     endif
     message('CUDA gencode = @0@'.format(gencode))
 
-
-    cuda_flags = []
+    cuda_flags = ['-DDEVICE_CODE']
     if get_option('buildtype') == 'debug'
-        cuda_flags += ['-DCUDA_DEBUG', '-G']
-    else
-        if is_nvtx_enabled
-            cuda_flags += ['-lineinfo']
-        endif
+        gencode += ['-DCUDA_DEBUG']
     endif
 
     ptx_files = {}
+    cu_files = []
     foreach name, _cu : cuda_cu_sources
+        cu_files += _cu
         t = custom_target('cu_ptx_target_' + name,
             build_by_default: true,
             output : ['@0@.fatbin'.format(name)],
@@ -377,7 +381,6 @@ if is_cuda_enabled
                 '-I', '../include',
                 '-I', '../src/feature',
                 '-I', '../src/' + cuda_dir,
-                '-DDEVICE_CODE',
             ] + cuda_flags
         )
         ptx_files += {name : [t]}
@@ -402,9 +405,27 @@ if is_cuda_enabled
         ptx_arrays += t
     endforeach
 
+    #if get_option('enable_nvcc')
+    #    # this is solely needed to have a correct compile_commands.json when building with nvcc
+    #    cuda_kernel_lib = library(
+    #        'cuda_kernel_lib',
+    #        cu_files,
+    #        include_directories : [
+    #            libvmaf_include,
+    #            vmaf_base_include,
+    #            cuda_dir,
+    #            feature_src_dir,
+    #            include_directories('../src/cuda/'),
+    #            cuda_inc,
+    #        ],
+    #        c_args : vmaf_cflags_common,
+    #        cuda_args : gencode + cuda_flags,
+    #    )
+    #endif
+
     cuda_static_lib = static_library(
         'cuda_common_vmaf_lib',
-        [cuda_sources, ptx_arrays,],
+        [cuda_sources, ptx_arrays],
         include_directories : [
             libvmaf_include,
             vmaf_base_include,
@@ -414,7 +435,6 @@ if is_cuda_enabled
             cuda_inc,
         ],
         c_args : vmaf_cflags_common,
-        cuda_args: cuda_flags # + ['-gencode', 'arch=compute_86,code=sm_86' ] #, '--use_fast_math']
     )
 
     common_cuda_objects += cuda_static_lib.extract_all_objects()
@@ -488,6 +508,7 @@ if is_cuda_enabled
         feature_src_dir + 'cuda/integer_adm_cuda.c',
         feature_src_dir + 'cuda/integer_vif_cuda.c',
         feature_src_dir + 'cuda/integer_motion_cuda.c',
+        feature_src_dir + 'cuda/cambi_cuda.c',
     ]
 endif
 

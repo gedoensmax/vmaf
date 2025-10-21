@@ -52,6 +52,7 @@ extern VmafFeatureExtractor vmaf_fex_cambi;
 extern VmafFeatureExtractor vmaf_fex_integer_adm_cuda;
 extern VmafFeatureExtractor vmaf_fex_integer_vif_cuda;
 extern VmafFeatureExtractor vmaf_fex_integer_motion_cuda;
+extern VmafFeatureExtractor vmaf_fex_cambi_cuda;
 #endif
 extern VmafFeatureExtractor vmaf_fex_null;
 
@@ -77,6 +78,7 @@ static VmafFeatureExtractor *feature_extractor_list[] = {
     &vmaf_fex_integer_adm_cuda,
     &vmaf_fex_integer_vif_cuda,
     &vmaf_fex_integer_motion_cuda,
+    &vmaf_fex_cambi_cuda,
 #endif
     &vmaf_fex_null,
     NULL
