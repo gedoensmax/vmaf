@@ -33,6 +33,7 @@
 #include <unistd.h>
 
 #include <assert.h>
+#include <math.h>
 
 #define RES_BUFFER_SIZE 4 * 3 * 2
 

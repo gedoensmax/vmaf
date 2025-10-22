@@ -332,12 +332,14 @@ if is_cuda_enabled
         nvcc_exe = find_program('clang')
         gencode = [
             '--cuda-gpu-arch=sm_75',
-            '--cuda-device-only',
-            '-m64',
             '-O2',
+            '-std=c++11',
+            '-m64',
+            '--cuda-feature=+ptx75', # https://discourse.llvm.org/t/cuda-shfl-sync-problem/56504
             '-S',
             '-nocudainc',
             '-nocudalib',
+            '--cuda-device-only',
             '-Wno-c++11-narrowing',
             '-I', '../src/compat/cuda',
         ]
@@ -357,46 +359,43 @@ if is_cuda_enabled
     ptx_files = {}
     foreach name, _cu : cuda_cu_sources
         t = custom_target('cu_ptx_target_' + name,
-            build_by_default: true,
-            output : ['@0@.fatbin'.format(name)],
-            input : _cu,
-            command : [nvcc_exe,
-                gencode,
-                '@INPUT@',
-                '-o', '@OUTPUT@' ,
-                '-I', './src',
-                '-I', '../src',
-                '-I', '../include',
-                '-I', '../src/feature',
-                '-I', '../src/' + cuda_dir,
-                '-DDEVICE_CODE',
-            ] + cuda_flags
+                          build_by_default : true,
+                          output : ['@0@.fatbin'.format(name)],
+                          input : _cu,
+                          command : [nvcc_exe,
+                                     gencode,
+                                     '@INPUT@',
+                                     '-o', '@OUTPUT@',
+                                     '-I', './src',
+                                     '-I', '../src',
+                                     '-I', '../include',
+                                     '-I', '../src/feature',
+                                     '-I', '../src/' + cuda_dir,
+                                     '-DDEVICE_CODE',
+                          ] + cuda_flags
         )
-        ptx_files += {name : [t]}
+        ptx_files += { name : [t] }
     endforeach
 
     message('ptx_files = @0@'.format(ptx_files.keys()))
 
-    # bin2c is distributed along with cuda tools. Use '--padd 0x00' to add a NULL-terminator byte
-    # to the end of the generated array.
-    bin2c_exe = find_program('bin2c')
+    bin2c = executable('bin2c_vmaf', [
+                           src_dir + '/build_tools/bin2c.c',
+                       ])
     ptx_arrays = []
     foreach name, _ptx : ptx_files
         t = custom_target('ptx_bin2c_@0@'.format(name),
-            build_by_default: true,
-            output : ['@PLAINNAME@.c'],
-            input : _ptx,
-            capture : true,
-            command : [bin2c_exe, '--const', '--padd', '0x00',
-                '--name', '@BASENAME@_ptx', '@INPUT@',
-            ]
+                          build_by_default : true,
+                          output : ['@BASENAME@.c'],
+                          input : _ptx,
+                          command : [bin2c, '@INPUT@', '@OUTPUT@', '@BASENAME@_ptx'],
         )
         ptx_arrays += t
     endforeach
 
     cuda_static_lib = static_library(
         'cuda_common_vmaf_lib',
-        [cuda_sources, ptx_arrays,],
+        [cuda_sources, ptx_arrays],
         include_directories : [
             libvmaf_include,
             vmaf_base_include,
@@ -406,7 +405,7 @@ if is_cuda_enabled
             cuda_inc,
         ],
         c_args : vmaf_cflags_common,
-        cuda_args: cuda_flags # + ['-gencode', 'arch=compute_86,code=sm_86' ] #, '--use_fast_math']
+        cuda_args : cuda_flags
     )
 
     common_cuda_objects += cuda_static_lib.extract_all_objects()

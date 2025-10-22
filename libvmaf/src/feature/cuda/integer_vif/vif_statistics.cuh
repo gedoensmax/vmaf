@@ -53,7 +53,11 @@ __device__ __inline__ uint16_t get_best16_from64(uint64_t temp, int *x) {
 __device__ __inline__ uint16_t log_generate(int i) {
   // if (i < 32767 || i >= 65536)
   //     return 0;
+#ifdef __clang__
+  return (uint16_t)roundf(__log2f(float(i)) * 2048.f);
+#else
   return (uint16_t)roundf(log2f(float(i)) * 2048.f);
+#endif
 }
 
 template <typename aligned_dtype = float4>
