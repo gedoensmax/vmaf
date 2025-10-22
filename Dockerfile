@@ -14,7 +14,9 @@ RUN apt-get update && \
     python3-venv \
     clang \
     wget \
-    unzip
+    unzip \
+    nvidia-cuda-dev \
+    nvidia-cuda-toolkit
 
 # retrieve source code
 COPY . /vmaf
@@ -26,7 +28,8 @@ RUN wget https://github.com/FFmpeg/nv-codec-headers/archive/${NV_CODEC_TAG}.zip 
 
 # make vmaf
 # when disabling NVCC, libvmaf will be built without cubin's which will compile kernels at start of the container
-RUN cd /vmaf && make clean && make ENABLE_NVCC=false && make install
+# nvidia-cuda-dev and nvidia-cuda-toolkit are required to build with NVCC but can be ommited for clang only builds
+RUN cd /vmaf && make clean && make ENABLE_NVCC=true && make install
 
 # install python tools
 RUN pip3 install --no-cache-dir -r /vmaf/python/requirements.txt --break-system-packages
