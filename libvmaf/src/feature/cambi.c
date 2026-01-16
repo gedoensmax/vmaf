@@ -557,10 +557,6 @@ static int cambi_preprocessing(const VmafPicture *image, VmafPicture *preprocess
     if (enc_bitdepth < 10) {
         anti_dithering_filter(preprocessed, width, height);
     }
-    // static int index = 0;
-    // write_image("image", index, image);
-    // write_image("image_preprocess_cpu", index, preprocessed);
-    // index++;
 
     return 0;
 }
@@ -944,8 +940,6 @@ static int cambi_score(VmafPicture *pics, uint16_t window_size, double topk,
     int scaled_height = height;
 
     get_spatial_mask(image, mask, buffers.mask_dp, buffers.derivative_buffer, width, height, derivative_callback);
-    static int index = 0;
-    // write_image("mask_cpu", index, mask);
     for (unsigned scale = 0; scale < NUM_SCALES; scale++) {
         if (scale > 0 || cambi_high_res_speedup) {
             scaled_width = (scaled_width + 1) >> 1;
@@ -955,17 +949,11 @@ static int cambi_score(VmafPicture *pics, uint16_t window_size, double topk,
         }
 
         filter_mode(image, scaled_width, scaled_height, buffers.filter_mode_buffer);
-        // char filter_mode_image_name[255];
-        // sprintf(filter_mode_image_name, "filter_mode_cpu_s%d", scale);
-        // write_image(filter_mode_image_name, index, image);
 
         calculate_c_values(image, mask, buffers.c_values, buffers.c_values_histograms, window_size,
                            num_diffs, tvi_for_diff, vlt_luma, buffers.diff_weights, buffers.all_diffs, scaled_width, scaled_height,
                            inc_range_callback, dec_range_callback);
-        char c_values_name[255];
-        sprintf(c_values_name, "c_values_cpu_s%d", scale);
-        write_buffer_as_image(c_values_name, index, scaled_width, scaled_height,
-                              sizeof(float) * scaled_width, 32, buffers.c_values);
+
         if (write_heatmaps) {
             int err = dump_c_values(heatmaps_files, buffers.c_values, scaled_width, scaled_height, scale, window_size,
                                     num_diffs, buffers.diff_weights, frame);
@@ -978,8 +966,6 @@ static int cambi_score(VmafPicture *pics, uint16_t window_size, double topk,
 
     uint16_t pixels_in_window = get_pixels_in_window(window_size);
     *score = weight_scores_per_scale(scores_per_scale, pixels_in_window);
-    index++;
-
     return 0;
 }
 

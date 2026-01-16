@@ -333,16 +333,6 @@ static int preprocess(VmafFeatureExtractor *fex, CambiState *s, VmafPicture *pic
         }
     }
 
-    /// copy image data back to host for debugging
-    // uint16_t* image_data_gpu = (uint16_t*)s->pics[0].data[0];
-    // size_t image_size = s->pics[0].stride[0] * s->pics[0].h[0];
-    // uint16_t* image_data_cpu = malloc(image_size);
-    // CHECK_CUDA(cu_f, cuMemcpyDtoHAsync(image_data_cpu, (CUdeviceptr)image_data_gpu, image_size, vmaf_cuda_picture_get_stream(pic)));
-    // CHECK_CUDA(cu_f, cuStreamSynchronize(vmaf_cuda_picture_get_stream(pic)));
-    // static int index = 0;
-    // write_buffer_as_image("image_preprocess_gpu", index, s->pics[0].w[0], s->pics[0].h[0], s->pics[0].stride[0], s->pics[0].bpc, image_data_cpu);
-    // index++;
-    // free(image_data_cpu);
     return 0;
 }
 
@@ -378,17 +368,6 @@ static void get_spatial_mask(CudaFunctions *cu_f, CambiCudaState *cu_s, const Vm
                                    block_dim_x, block_dim_y, 1,
                                    0, cu_s->str,
                                    mask_params, NULL));
-
-    // copy mask data back to host for debugging
-    // uint16_t* mask_data_gpu = (uint16_t*)mask->data[0];
-    // size_t mask_size = mask->stride[0] * mask->h[0];
-    // uint16_t* mask_data_cpu = malloc(mask_size);
-    // CHECK_CUDA(cu_f, cuMemcpyDtoHAsync(mask_data_cpu, (CUdeviceptr)mask_data_gpu, mask_size, cu_s->str));
-    // CHECK_CUDA(cu_f, cuStreamSynchronize(cu_s->str));
-    // static int index = 0;
-    // write_buffer_as_image("mask_gpu", index, mask->w[0], mask->h[0], mask->stride[0], mask->bpc, mask_data_cpu);
-    // index++;
-    // free(mask_data_cpu);
 }
 
 
@@ -474,17 +453,6 @@ static int cambi_score(CudaFunctions *cu_f, CambiState *s, VmafPicture *pics, ui
         } else {
             decimate_and_filter_mode(cu_f, cu_s, image, image_decimate, scaled_width, scaled_height);
         }
-        // copy image data back to host for debugging
-        // uint16_t* image_decimate_gpu = (uint16_t*)image_decimate->data[0];
-        // size_t image_decimate_size = image_decimate->stride[0] * image_decimate->h[0];
-        // uint16_t* image_decimate_cpu = malloc(image_decimate_size);
-        // CHECK_CUDA(cu_f, cuMemcpyDtoHAsync(image_decimate_cpu, (CUdeviceptr)image_decimate_gpu, image_decimate_size, cu_s->str));
-        // CHECK_CUDA(cu_f, cuStreamSynchronize(cu_s->str));
-        // char filter_mode_image_name[255];
-        // sprintf(filter_mode_image_name, "filter_mode_gpu_s%d", scale);
-        // write_buffer_as_image(filter_mode_image_name,index, image_decimate->w[0], image_decimate->h[0],
-        //                       image_decimate->stride[0], image_decimate->bpc, image_decimate_cpu);
-        // free(image_decimate_cpu);
 
         current_data.scaled_heights[scale] = scaled_width;
         current_data.scaled_widths[scale] = scaled_height;
@@ -508,12 +476,9 @@ static int cambi_score(CudaFunctions *cu_f, CambiState *s, VmafPicture *pics, ui
         CUdeviceptr src = buffers->c_values->data;
         void * dst = buffers->c_values_host + (c_values_offset / sizeof(float));
         CHECK_CUDA(cu_f, cuMemcpyDtoHAsync(dst, src, scale_size, cu_s->str));
-        // char c_values_name[255];
-        // sprintf(c_values_name, "c_values_gpu_s%d", scale);
-        // write_buffer_as_image(c_values_name, index, scaled_width, scaled_height,
-        //                       sizeof(float) * scaled_width, 32, dst);
         if (write_heatmaps) {
-            int err = dump_c_values(s->heatmaps_files, s->buffers.c_values, scaled_width, scaled_height, scale, window_size,
+            CHECK_CUDA(cu_f, cuStreamSynchronize(cu_s->str));
+            int err = dump_c_values(s->heatmaps_files, buffers->c_values_host, scaled_width, scaled_height, scale, window_size,
                                     num_diffs, s->buffers.diff_weights, frame);
             if (err) return err;
         }
@@ -523,7 +488,6 @@ static int cambi_score(CudaFunctions *cu_f, CambiState *s, VmafPicture *pics, ui
     CHECK_CUDA(cu_f, cuStreamWaitEvent(cu_s->host_stream, cu_s->finished, CU_EVENT_WAIT_DEFAULT));
     *((write_score_parameters_cambi*)cu_s->write_score_parameters) = current_data;
     CHECK_CUDA(cu_f, cuLaunchHostFunc(cu_s->host_stream, (CUhostFn*)write_scores, cu_s->write_score_parameters));
-
     return 0;
 }
 
@@ -570,7 +534,6 @@ static int extract(VmafFeatureExtractor *fex,
     CambiCudaState *cu_s = s->cambi_cuda_state;
 
     CHECK_CUDA(cu_f, cuCtxPushCurrent(fex->cu_state->ctx));
-    // CHECK_CUDA(cu_f, cuStreamSynchronize(cu_s->str));
 
     int err = preprocess_and_extract_cambi(fex, s, dist_pic, false, feature_collector, index);
     if (err) return err;

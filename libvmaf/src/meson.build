@@ -405,24 +405,6 @@ if is_cuda_enabled
         ptx_arrays += t
     endforeach
 
-    #if get_option('enable_nvcc')
-    #    # this is solely needed to have a correct compile_commands.json when building with nvcc
-    #    cuda_kernel_lib = library(
-    #        'cuda_kernel_lib',
-    #        cu_files,
-    #        include_directories : [
-    #            libvmaf_include,
-    #            vmaf_base_include,
-    #            cuda_dir,
-    #            feature_src_dir,
-    #            include_directories('../src/cuda/'),
-    #            cuda_inc,
-    #        ],
-    #        c_args : vmaf_cflags_common,
-    #        cuda_args : gencode + cuda_flags,
-    #    )
-    #endif
-
     cuda_static_lib = static_library(
         'cuda_common_vmaf_lib',
         [cuda_sources, ptx_arrays],
