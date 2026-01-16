@@ -19,6 +19,8 @@
 
 #pragma once
 
+#include "debug_helper.h"
+
 static FORCE_INLINE inline uint16_t ceil_log2(uint32_t num) {
     if (num==0)
         return 0;
@@ -36,44 +38,6 @@ static FORCE_INLINE inline uint16_t get_mask_index(unsigned input_width, unsigne
                                                    uint16_t filter_size) {
     uint32_t shifted_wh = (input_width >> 6) * (input_height >> 6);
     return (filter_size * filter_size + 3 * (ceil_log2(shifted_wh) - 11) - 1)>>1;
-}
-
-static void write_buffer_to_file(const char *filename, const void *buffer, int h, int width, int stride, int bpc) {
-    FILE *file = fopen(filename, "wb");
-    if (!file) {
-        perror("fopen");
-        return;
-    }
-    if (bpc <= 8 && bpc > 0) {
-        width *= sizeof(uint8_t);
-    } else if (bpc > 8 && bpc <= 16) {
-        width *= sizeof(uint16_t);
-    } else if (bpc > 16 && bpc <=32) {
-        width *= sizeof(uint32_t);
-    } else {
-        perror("unsupported bpc");
-        return;
-    }
-    for (int row =0 ; row < h; row++) {
-        if (width != fwrite(buffer, 1, width, file)) {
-            perror("fwrite not all bytes are written ");
-            return;
-        }
-        buffer += stride;
-    }
-    fclose(file);
-}
-
-static void write_image(char* filename_base, int index, VmafPicture* pic) {
-    char name_buffer[1024];
-    snprintf(name_buffer, sizeof(name_buffer), "%s_%d_%dx%d_b%d.yuv",filename_base, index, pic->w[0], pic->h[0], pic->bpc);
-    write_buffer_to_file(name_buffer, pic->data[0], pic->h[0], pic->w[0], pic->stride[0], pic->bpc);
-}
-
-static void write_buffer_as_image(char* filename_base, int index, int width, int height, int stride, int bpc, const void* image_buffer) {
-    char name_buffer[1024];
-    snprintf(name_buffer, sizeof(name_buffer), "%s_%d_%dx%d_b%d.yuv",filename_base, index, width, height, bpc);
-    write_buffer_to_file(name_buffer, image_buffer, height, width, stride, bpc);
 }
 
 

@@ -22,6 +22,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
+#include <time.h>
 
 #include "dict.h"
 #include "feature_collector.h"
@@ -33,68 +34,9 @@
 #include "picture.h"
 #include "picture_copy.h"
 #include "vif_tools.h"
+#include "speed_helpers.h"
+#include "debug_helper.h"
 
-typedef struct SpeedDimensions {
-    size_t original_height;
-    size_t original_width;
-    size_t scaled_height;
-    size_t scaled_width;
-    size_t alloc_height;
-    size_t alloc_width;
-    size_t operating_height;
-    size_t operating_width;
-    size_t block_size;
-    size_t truncated_width;
-    size_t truncated_height;
-    size_t num_blocks_horizontal;
-    size_t num_blocks_vertical;
-    size_t num_blocks;
-    size_t elements_in_block;
-    size_t submatrix_width;
-    size_t submatrix_height;
-} SpeedDimensions;
-
-typedef struct SpeedResultBuffers {
-    float *entropies;
-    float *variances;
-} SpeedResultBuffers;
-
-typedef struct SpeedBuffers {
-    float *independent_term;
-    float *linear_system_sol;
-    float *cov_mat;
-    float *eigenvalues;
-    float *tmp_buffer;
-} SpeedBuffers;
-
-// Everything that is passed in as a feature option and is needed for
-// SpEED computation
-typedef struct SpeedOptions {
-    double speed_kernelscale;
-    double speed_prescale;
-    char *speed_prescale_method;
-    double speed_sigma_nn;
-    double speed_nn_floor;
-    int speed_weight_var_mode;
-} SpeedOptions;
-
-// Everything that is needed to compute SpEED given a pair of float buffers
-// (ref, dis), except for what is provided in SpeedOptions
-typedef struct SpeedState {
-    SpeedDimensions dimensions;
-    SpeedResultBuffers ref_results;
-    SpeedResultBuffers dis_results;
-    SpeedBuffers buffers;
-    size_t float_stride;
-} SpeedState;
-
-#define DEFAULT_BLOCK_SIZE (5)
-#define NUM_SQUARE_BUFFERS (5)
-#define NUM_RECT_BUFFERS (1)
-#define NUM_FRAME_BUFFERS (2)
-#define NUM_SCALES (4)
-#define EIGENVALUE_EPS (1e-6)
-#define EIGENVALUE_MAX_ITERS (500)
 #define ALMOST_EQUAL(x,c) (fabs((x) - (c)) < 1.0e-3)
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 
@@ -362,7 +304,7 @@ static void convert_to_tridiagonal(float *A, int size, float *d, float *sd,
 static void chop_small_elements(float *d, float *sd, int size)
 {
     for (int i = 0; i < size - 1; i++) {
-        if (fabsf(sd[i]) < EIGENVALUE_EPS * (fabsf(d[i]) + fabsf(d[i + 1])))
+        if (fabsf(sd[i]) < SPEED_EIGENVALUE_EPS * (fabsf(d[i]) + fabsf(d[i + 1])))
             sd[i] = 0.0f;
     }
 }
@@ -403,7 +345,7 @@ static void create_givens(const float a, const float b, float *c, float *s)
 static void qr_step(float *d, float *sd, int n)
 {
     float mu = trailing_eigenvalue(d, sd, n);
-    if (EIGENVALUE_EPS * fabsf(mu) > fabsf(d[0]) + fabsf(sd[0]))
+    if (SPEED_EIGENVALUE_EPS * fabsf(mu) > fabsf(d[0]) + fabsf(sd[0]))
         mu = 0;
 
     float x = d[0] - mu;
@@ -494,7 +436,7 @@ static void compute_eigenvalues_tridiagonal(float *d, float *sd,
     // Progressively reduce the matrix until it is diagonal
     int b = size - 1;
     int iter = 0;
-    while (b > 0 && iter < EIGENVALUE_MAX_ITERS) {
+    while (b > 0 && iter < SPEED_EIGENVALUE_MAX_ITERS) {
         if (sd[b - 1] == 0.0f) {
             b--;
             continue;
@@ -517,7 +459,7 @@ static void compute_eigenvalues_tridiagonal(float *d, float *sd,
         iter++;
     }
 
-    if (iter == EIGENVALUE_MAX_ITERS) {
+    if (iter == SPEED_EIGENVALUE_MAX_ITERS) {
         vmaf_log(VMAF_LOG_LEVEL_WARNING,
                  "compute_eigenvalues_tridiagonal: max iterations reached, "
                  "possible non-convergence\n");
@@ -598,7 +540,7 @@ static int solve_triangular_system(const Matrix *R, Matrix *X, const Matrix *B)
 
     for (int i = R->rows - 1; i >= 0; i--) {
         float denominator = R->data[i * R->cols + i];
-        if (fabsf(denominator) < EIGENVALUE_EPS) {
+        if (fabsf(denominator) < SPEED_EIGENVALUE_EPS) {
             return -EINVAL;
         }
         for (int j = 0; j < X->cols; j++) {
@@ -766,7 +708,7 @@ static void update_entropy(SpeedDimensions dim, float *entropy, const float *S,
 static bool is_matrix_regular(SpeedDimensions dim, const float *eigenvalues)
 {
     for (size_t i = 0; i < dim.elements_in_block; i++) {
-        if (eigenvalues[i] < EIGENVALUE_EPS) {
+        if (eigenvalues[i] < SPEED_EIGENVALUE_EPS) {
             return false;
         }
     }
@@ -811,6 +753,26 @@ static int est_params(SpeedState *s, const float *data, float sigma_nn,
                dim.elements_in_block * dim.num_blocks * sizeof(float));
     }
 
+    // #region agent log - Hypothesis E,F: CPU after linear solve
+    {
+        FILE *logf = fopen("/tmp/tmp.itUGhU69br/libvmaf/debug.log", "a");
+        if (logf) {
+            fprintf(logf,
+                    "{\"hypothesisId\":\"E_F\",\"location\":\"speed.c:after_linear_solve\","
+                    "\"message\":\"CPU after linear solve\",\"data\":{"
+                    "\"indep_first_4\":[%f,%f,%f,%f],"
+                    "\"solution_first_4\":[%f,%f,%f,%f]"
+                    "},\"timestamp\":%ld}\n",
+                    s->buffers.independent_term[0], s->buffers.independent_term[1],
+                    s->buffers.independent_term[2], s->buffers.independent_term[3],
+                    s->buffers.linear_system_sol[0], s->buffers.linear_system_sol[1],
+                    s->buffers.linear_system_sol[2], s->buffers.linear_system_sol[3],
+                    (long)time(NULL));
+            fclose(logf);
+        }
+    }
+    // #endregion
+
     // Step 5: Compute the pointwise product Z = (X * Y)/B^2, where X and Y are
     // from the linear system above, and B is the block size.
     // Store the results in s->linear_system_sol
@@ -839,6 +801,42 @@ static int est_params(SpeedState *s, const float *data, float sigma_nn,
     // Step 10: Return S, E
     memcpy(output->variances, s->buffers.linear_system_sol,
            dim.num_blocks * sizeof(float));
+
+    // #region agent log - Hypothesis A,B,C: CPU est_params results
+    {
+        FILE *logf = fopen("/tmp/tmp.itUGhU69br/libvmaf/debug.log", "a");
+        if (logf) {
+            fprintf(logf,
+                    "{\"hypothesisId\":\"A_B_C\",\"location\":\"speed.c:est_params\","
+                    "\"message\":\"CPU est_params results\",\"data\":{"
+                    "\"num_blocks\":%zu,\"num_blocks_h\":%zu,\"num_blocks_v\":%zu,"
+                    "\"elements_in_block\":%zu,"
+                    "\"submatrix_w\":%zu,\"submatrix_h\":%zu,"
+                    "\"truncated_w\":%zu,\"truncated_h\":%zu,"
+                    "\"stride_px\":%zu,"
+                    "\"cov_diag\":[%f,%f,%f,%f,%f],"
+                    "\"eigenvalues\":[%f,%f,%f,%f],"
+                    "\"variances\":[%f,%f,%f,%f],"
+                    "\"entropies\":[%f,%f,%f,%f]"
+                    "},\"timestamp\":%ld}\n",
+                    dim.num_blocks, dim.num_blocks_horizontal, dim.num_blocks_vertical,
+                    dim.elements_in_block,
+                    dim.submatrix_width, dim.submatrix_height,
+                    dim.truncated_width, dim.truncated_height,
+                    stride_px,
+                    s->buffers.cov_mat[0], s->buffers.cov_mat[26], s->buffers.cov_mat[52],
+                    s->buffers.cov_mat[78], s->buffers.cov_mat[104],
+                    s->buffers.eigenvalues[0], s->buffers.eigenvalues[1],
+                    s->buffers.eigenvalues[2], s->buffers.eigenvalues[3],
+                    output->variances[0], output->variances[1],
+                    output->variances[2], output->variances[3],
+                    output->entropies[0], output->entropies[1],
+                    output->entropies[2], output->entropies[3],
+                    (long)time(NULL));
+            fclose(logf);
+        }
+    }
+    // #endregion
 
     return cannot_invert ? -EINVAL : 0;
 }
@@ -888,6 +886,26 @@ static float get_speed_score(SpeedDimensions dim, SpeedResultBuffers ref_results
 
     }
 
+    // #region agent log - Hypothesis D: CPU score computation
+    {
+        FILE *logf = fopen("/tmp/tmp.itUGhU69br/libvmaf/debug.log", "a");
+        if (logf) {
+            fprintf(logf,
+                    "{\"hypothesisId\":\"D\",\"location\":\"speed.c:get_speed_score\","
+                    "\"message\":\"CPU score computation\",\"data\":{"
+                    "\"score_sum\":%f,\"num_blocks\":%zu,\"final_score\":%f,"
+                    "\"base_entropy\":%f,\"sigma_nn\":%f,\"nn_floor\":%f,"
+                    "\"weight_var_mode\":%d"
+                    "},\"timestamp\":%ld}\n",
+                    score, dim.num_blocks, score / dim.num_blocks,
+                    dim.elements_in_block * (log2((1 + nn_floor) * sigma_nn) + log2(2 * M_PI * M_E)),
+                    sigma_nn, nn_floor, speed_weight_var_mode,
+                    (long)time(NULL));
+            fclose(logf);
+        }
+    }
+    // #endregion
+
     return score / dim.num_blocks;
 }
 
@@ -927,7 +945,7 @@ static void filter_and_downscale(SpeedDimensions dim, SpeedOptions *opt,
     // The kernelscale has been checked for validity in the init callback
     int filter_width_antialias = vif_get_filter_size(1, opt->speed_kernelscale);
     float filter_antialias[128];
-    speed_get_antialias_filter(filter_antialias, NUM_SCALES,
+    speed_get_antialias_filter(filter_antialias, SPEED_NUM_SCALES,
                                opt->speed_kernelscale);
     vif_filter1d_s(filter_antialias, frame_buffer, curr_scale, tmpbuf,
                    dim.scaled_width, dim.scaled_height, float_stride,
@@ -936,14 +954,15 @@ static void filter_and_downscale(SpeedDimensions dim, SpeedOptions *opt,
     vif_dec16_s(curr_scale, frame_buffer, dim.scaled_width, dim.scaled_height,
                 float_stride, float_stride);
 
-    size_t downscaled_w = dim.scaled_width >> NUM_SCALES;
-    size_t downscaled_h = dim.scaled_height >> NUM_SCALES;
+    size_t downscaled_w = dim.scaled_width >> SPEED_NUM_SCALES;
+    size_t downscaled_h = dim.scaled_height >> SPEED_NUM_SCALES;
 
-    int filter_width = vif_get_filter_size(NUM_SCALES, opt->speed_kernelscale);
+    int filter_width = vif_get_filter_size(SPEED_NUM_SCALES, opt->speed_kernelscale);
     float filter[128];
-    vif_get_filter(filter, NUM_SCALES, opt->speed_kernelscale);
+    vif_get_filter(filter, SPEED_NUM_SCALES, opt->speed_kernelscale);
     vif_filter1d_s(filter, frame_buffer, curr_scale, tmpbuf, downscaled_w,
                    downscaled_h, float_stride, float_stride, filter_width);
+
     subtract_image(frame_buffer, curr_scale, downscaled_w, downscaled_h,
                    float_stride);
 }
@@ -953,10 +972,20 @@ int speed_extract_score(SpeedState *s, SpeedOptions *opt, float *ref,
 {
     filter_and_downscale(s->dimensions, opt, ref, s->buffers.tmp_buffer,
                          s->float_stride);
+    // static int index = 0;
+    // size_t stride_px = s->float_stride;
+    // int op_w = s->dimensions.operating_width;
+    // int op_h = s->dimensions.operating_height;
+    // write_buffer_as_image("preprocess_ref_cpu", index, op_w, op_h, stride_px, 32,
+    //                           ref);
+
     int err_ref = est_params(s, ref, opt->speed_sigma_nn, &(s->ref_results));
 
     filter_and_downscale(s->dimensions, opt, dis, s->buffers.tmp_buffer,
                          s->float_stride);
+    // write_buffer_as_image("preprocess_dis_cpu", index, op_w, op_h, stride_px, 32,
+    //                               dis);
+    // ++index;
 
     int err_dis = est_params(s, dis, opt->speed_sigma_nn, &(s->dis_results));
 
@@ -973,41 +1002,15 @@ int speed_extract_score(SpeedState *s, SpeedOptions *opt, float *ref,
     return err_ref || err_dis;
 }
 
-static int speed_init_dimensions(SpeedDimensions *dim, int w, int h,
-                                 double speed_prescale)
-{
-    dim->original_height = h;
-    dim->original_width = w;
-    dim->scaled_height = (int)(dim->original_height * speed_prescale + 0.5);
-    dim->scaled_width = (int)(dim->original_width * speed_prescale + 0.5);
-    dim->alloc_height = MAX(dim->original_height, dim->scaled_height);
-    dim->alloc_width = MAX(dim->original_width, dim->scaled_width);
-    dim->operating_height = dim->scaled_height >> NUM_SCALES;
-    dim->operating_width = dim->scaled_width >> NUM_SCALES;
-    dim->block_size = DEFAULT_BLOCK_SIZE;
-    dim->truncated_width =
-        (dim->operating_width / dim->block_size) * dim->block_size;
-    dim->truncated_height =
-        (dim->operating_height / dim->block_size * dim->block_size);
-    dim->num_blocks_horizontal = dim->truncated_width / dim->block_size;
-    dim->num_blocks_vertical = dim->truncated_height / dim->block_size;
-    dim->num_blocks = dim->num_blocks_horizontal * dim->num_blocks_vertical;
-    dim->elements_in_block = dim->block_size * dim->block_size;
-    dim->submatrix_width = dim->truncated_width - dim->block_size + 1;
-    dim->submatrix_height = dim->truncated_height - dim->block_size + 1;
-
-    if (dim->truncated_height == 0 || dim->truncated_width == 0) {
-        vmaf_log(VMAF_LOG_LEVEL_ERROR,
-                 "SpEED: image too small, operating width or height is 0");
-        return -EINVAL;
-    }
-    return 0;
-}
-
 int speed_init(SpeedState *s, SpeedOptions *opt, int w, int h)
 {
     SpeedDimensions *dim = &s->dimensions;
-    speed_init_dimensions(dim, w, h, opt->speed_prescale);
+    int err = speed_init_dimensions(dim, w, h, opt->speed_prescale);
+    if (err) {
+        vmaf_log(VMAF_LOG_LEVEL_ERROR,
+                 "SpEED: image too small, operating width or height is 0");
+        return err;
+    }
 
     // Check that the kernelscale is valid
     if (!vif_validate_kernelscale(opt->speed_kernelscale)) {
@@ -1024,9 +1027,9 @@ int speed_init(SpeedState *s, SpeedOptions *opt, int w, int h)
     size_t stride_px = s->float_stride / sizeof(float);
 
     size_t tmp_buffer_size = sizeof(float) * (
-        NUM_SQUARE_BUFFERS * dim->elements_in_block * dim->elements_in_block
-        + NUM_RECT_BUFFERS * dim->elements_in_block * dim->num_blocks
-        + NUM_FRAME_BUFFERS * dim->alloc_height * stride_px
+        SPEED_NUM_SQUARE_BUFFERS * dim->elements_in_block * dim->elements_in_block
+        + SPEED_NUM_RECT_BUFFERS * dim->elements_in_block * dim->num_blocks
+        + SPEED_NUM_FRAME_BUFFERS * dim->alloc_height * stride_px
     );
 
     s->buffers.independent_term =
@@ -1089,110 +1092,18 @@ int speed_close(SpeedState *s) {
     return 0;
 }
 
-#define DEFAULT_SPEED_SIGMA_NN (0.29)
-#define DEFAULT_SPEED_MAX_VAL (1000.0)
-#define DEFAULT_SPEED_NN_FLOOR (0.0)
-#define DEFAULT_SPEED_KERNELSCALE (1.0)
-#define DEFAULT_SPEED_PRESCALE (1.0)
-#define DEFAULT_SPEED_PRESCALE_METHOD ("nearest")
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 
-typedef struct SpeedChromaState {
-    SpeedState speed_state;
-    SpeedOptions speed_options;
-    float *frame_buffer_ref;
-    float *frame_buffer_dis;
-    VmafDictionary *feature_name_dict;
-    double speed_chroma_kernelscale;
-    double speed_chroma_prescale;
-    char *speed_chroma_prescale_method;
-    double speed_chroma_sigma_nn;
-    double speed_chroma_nn_floor;
-    double speed_chroma_max_val;
-    int speed_weight_var_mode;
-} SpeedChromaState;
+// SpeedChromaState is defined in speed_helpers.h
 
 static const VmafOption options_chroma[] = {
-    {
-        .name = "speed_kernelscale",
-        .help = "scaling factor for the gaussian kernel (2.0 means "
-                "multiplying the standard deviation by 2 and enlarge "
-                "the kernel size accordingly",
-        .offset = offsetof(SpeedChromaState, speed_chroma_kernelscale),
-        .type = VMAF_OPT_TYPE_DOUBLE,
-        .default_val.d = DEFAULT_SPEED_KERNELSCALE,
-        .min = 0.1,
-        .max = 4.0,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "ks",
-    },
-    {
-        .name = "speed_prescale",
-        .help = "scaling factor for the frame (2.0 means "
-                "making the image twice as large on each dimension)",
-        .offset = offsetof(SpeedChromaState, speed_chroma_prescale),
-        .type = VMAF_OPT_TYPE_DOUBLE,
-        .default_val.d = DEFAULT_SPEED_PRESCALE,
-        .min = 0.1,
-        .max = 4.0,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "ps",
-    },
-    {
-        .name = "speed_prescale_method",
-        .help = "scaling method for the frame, supported options: "
-                 "[nearest, bilinear, bicubic, lanczos4]",
-        .offset = offsetof(SpeedChromaState, speed_chroma_prescale_method),
-        .type = VMAF_OPT_TYPE_STRING,
-        .default_val.s = DEFAULT_SPEED_PRESCALE_METHOD,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "psm",
-    },
-    {
-        .name = "speed_sigma_nn",
-        .help = "standard deviation of neural noise",
-        .offset = offsetof(SpeedChromaState, speed_chroma_sigma_nn),
-        .type = VMAF_OPT_TYPE_DOUBLE,
-        .default_val.d = DEFAULT_SPEED_SIGMA_NN,
-        .min = 0.1,
-        .max = 2.0,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "snn",
-    },
-    {
-        .name = "speed_nn_floor",
-        .help = "neural noise floor, expressed in percentage of sigma_nn",
-        .offset = offsetof(SpeedChromaState, speed_chroma_nn_floor),
-        .type = VMAF_OPT_TYPE_DOUBLE,
-        .default_val.d = DEFAULT_SPEED_NN_FLOOR,
-        .min = 0.0,
-        .max = 1.0,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "nnf",
-    },
-    {
-        .name = "speed_max_val",
-        .help = "maximum value allowed; "
-                "larger values will be clipped to this value",
-        .offset = offsetof(SpeedChromaState, speed_chroma_max_val),
-        .type = VMAF_OPT_TYPE_DOUBLE,
-        .default_val.d = DEFAULT_SPEED_MAX_VAL,
-        .min = 0.0,
-        .max = 1000.0,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "mxv",
-    },
-    {
-        .name = "speed_weight_var_mode",
-        .help = "different approaches to perform variance-absed weighting",
-        .offset = offsetof(SpeedChromaState, speed_weight_var_mode),
-        .type = VMAF_OPT_TYPE_INT,
-        .default_val.d = 0,
-        .min = 0,
-        .max = 6,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "wvm",
-    },
+    SPEED_OPTION_KERNELSCALE(SpeedChromaState, speed_chroma_),
+    SPEED_OPTION_PRESCALE(SpeedChromaState, speed_chroma_),
+    SPEED_OPTION_PRESCALE_METHOD(SpeedChromaState, speed_chroma_),
+    SPEED_OPTION_SIGMA_NN(SpeedChromaState, speed_chroma_),
+    SPEED_OPTION_NN_FLOOR(SpeedChromaState, speed_chroma_),
+    SPEED_OPTION_MAX_VAL(SpeedChromaState, speed_chroma_),
+    SPEED_OPTION_WEIGHT_VAR_MODE(SpeedChromaState, speed_weight_var_mode),
     { 0 }
 };
 
@@ -1234,13 +1145,13 @@ static int init_chroma(VmafFeatureExtractor *fex, enum VmafPixelFormat pix_fmt,
     if (!s->feature_name_dict)
         return -ENOMEM;
 
-    s->frame_buffer_ref =
+    s->cpu_frame_buffer_ref =
         aligned_malloc(s->speed_state.float_stride * dim.alloc_height, 32);
-    if (!s->frame_buffer_ref)
+    if (!s->cpu_frame_buffer_ref)
         return -ENOMEM;
-    s->frame_buffer_dis =
+    s->cpu_frame_buffer_dis =
         aligned_malloc(s->speed_state.float_stride * dim.alloc_height, 32);
-    if (!s->frame_buffer_dis)
+    if (!s->cpu_frame_buffer_dis)
         return -ENOMEM;
 
     return 0;
@@ -1249,12 +1160,13 @@ static int init_chroma(VmafFeatureExtractor *fex, enum VmafPixelFormat pix_fmt,
 static float extract_channel(SpeedChromaState *s, VmafPicture *ref_pic,
                              VmafPicture *dist_pic, int channel, float *score)
 {
-    picture_copy(s->frame_buffer_ref, s->speed_state.float_stride,
+    picture_copy(s->cpu_frame_buffer_ref, s->speed_state.float_stride,
                  ref_pic, -128, ref_pic->bpc, channel);
-    picture_copy(s->frame_buffer_dis, s->speed_state.float_stride,
+    picture_copy(s->cpu_frame_buffer_dis, s->speed_state.float_stride,
                  dist_pic, -128, dist_pic->bpc, channel);
+
     return speed_extract_score(&s->speed_state, &s->speed_options,
-                               s->frame_buffer_ref, s->frame_buffer_dis, score);
+                               s->cpu_frame_buffer_ref, s->cpu_frame_buffer_dis, score);
 }
 
 static int extract_chroma(VmafFeatureExtractor *fex,
@@ -1309,23 +1221,16 @@ static int close_chroma(VmafFeatureExtractor *fex)
 
     speed_close(&s->speed_state);
 
-    if (s->frame_buffer_ref)
-        aligned_free(s->frame_buffer_ref);
-    if (s->frame_buffer_dis)
-        aligned_free(s->frame_buffer_dis);
+    if (s->cpu_frame_buffer_ref)
+        aligned_free(s->cpu_frame_buffer_ref);
+    if (s->cpu_frame_buffer_dis)
+        aligned_free(s->cpu_frame_buffer_dis);
 
     if (s->feature_name_dict)
         vmaf_dictionary_free(&s->feature_name_dict);
 
     return 0;
 }
-
-static const char *provided_features_chroma[] = {
-    "Speed_chroma_feature_speed_chroma_u_score",
-    "Speed_chroma_feature_speed_chroma_v_score",
-    "Speed_chroma_feature_speed_chroma_uv_score",
-    NULL
-};
 
 VmafFeatureExtractor vmaf_fex_speed_chroma = {
     .name = "speed_chroma",
@@ -1337,109 +1242,16 @@ VmafFeatureExtractor vmaf_fex_speed_chroma = {
     .provided_features = provided_features_chroma,
 };
 
-#define DEFAULT_SPEED_SIGMA_NN (0.29)
-#define DEFAULT_SPEED_MAX_VAL (1000.0)
-#define DEFAULT_SPEED_NN_FLOOR (0.0)
-#define DEFAULT_SPEED_KERNELSCALE (1.0)
-#define DEFAULT_SPEED_PRESCALE (1.0)
-#define DEFAULT_SPEED_PRESCALE_METHOD ("nearest")
+// SpeedTemporalState is defined in speed_helpers.h
 
-typedef struct SpeedTemporalState {
-    SpeedState speed_state;
-    SpeedOptions speed_options;
-    float *frame_buffer_ref[2];
-    float *frame_buffer_dis[2];
-    VmafDictionary *feature_name_dict;
-    int index;
-    double score;
-    double speed_temporal_kernelscale;
-    double speed_temporal_prescale;
-    char *speed_temporal_prescale_method;
-    double speed_temporal_sigma_nn;
-    double speed_temporal_nn_floor;
-    double speed_temporal_max_val;
-    bool speed_temporal_use_ref_diff;
-} SpeedTemporalState;
-
-static const VmafOption options[] = {
-    {
-        .name = "speed_kernelscale",
-        .help = "scaling factor for the gaussian kernel (2.0 means "
-                "multiplying the standard deviation by 2 and enlarge "
-                "the kernel size accordingly",
-        .offset = offsetof(SpeedTemporalState, speed_temporal_kernelscale),
-        .type = VMAF_OPT_TYPE_DOUBLE,
-        .default_val.d = DEFAULT_SPEED_KERNELSCALE,
-        .min = 0.1,
-        .max = 4.0,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "ks",
-    },
-    {
-        .name = "speed_prescale",
-        .help = "scaling factor for the frame (2.0 means "
-                "making the image twice as large on each dimension)",
-        .offset = offsetof(SpeedTemporalState, speed_temporal_prescale),
-        .type = VMAF_OPT_TYPE_DOUBLE,
-        .default_val.d = DEFAULT_SPEED_PRESCALE,
-        .min = 0.1,
-        .max = 4.0,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "ps",
-    },
-    {
-        .name = "speed_prescale_method",
-        .help = "scaling method for the frame, supported options: "
-                "[nearest, bilinear, bicubic, lanczos4]",
-        .offset = offsetof(SpeedTemporalState, speed_temporal_prescale_method),
-        .type = VMAF_OPT_TYPE_STRING,
-        .default_val.s = DEFAULT_SPEED_PRESCALE_METHOD,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "psm",
-    },
-    {
-        .name = "speed_sigma_nn",
-        .help = "standard deviation of neural noise",
-        .offset = offsetof(SpeedTemporalState, speed_temporal_sigma_nn),
-        .type = VMAF_OPT_TYPE_DOUBLE,
-        .default_val.d = DEFAULT_SPEED_SIGMA_NN,
-        .min = 0.1,
-        .max = 2.0,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "snn",
-    },
-    {
-        .name = "speed_nn_floor",
-        .help = "neural noise floor, expressed in percentage of sigma_nn",
-        .offset = offsetof(SpeedTemporalState, speed_temporal_nn_floor),
-        .type = VMAF_OPT_TYPE_DOUBLE,
-        .default_val.d = DEFAULT_SPEED_NN_FLOOR,
-        .min = 0.0,
-        .max = 1.0,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "nnf",
-    },
-    {
-        .name = "speed_max_val",
-        .help = "maximum value allowed; larger values will be clipped to this "
-                "value",
-        .offset = offsetof(SpeedTemporalState, speed_temporal_max_val),
-        .type = VMAF_OPT_TYPE_DOUBLE,
-        .default_val.d = DEFAULT_SPEED_MAX_VAL,
-        .min = 0.0,
-        .max = 1000.0,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "mxv",
-    },
-    {
-        .name = "speed_use_ref_diff",
-        .help = "debug mode: enable additional output",
-        .offset = offsetof(SpeedTemporalState, speed_temporal_use_ref_diff),
-        .type = VMAF_OPT_TYPE_BOOL,
-        .default_val.b = false,
-        .flags = VMAF_OPT_FLAG_FEATURE_PARAM,
-        .alias = "urd",
-    },
+static const VmafOption options_temporal[] = {
+    SPEED_OPTION_KERNELSCALE(SpeedTemporalState, speed_temporal_),
+    SPEED_OPTION_PRESCALE(SpeedTemporalState, speed_temporal_),
+    SPEED_OPTION_PRESCALE_METHOD(SpeedTemporalState, speed_temporal_),
+    SPEED_OPTION_SIGMA_NN(SpeedTemporalState, speed_temporal_),
+    SPEED_OPTION_NN_FLOOR(SpeedTemporalState, speed_temporal_),
+    SPEED_OPTION_MAX_VAL(SpeedTemporalState, speed_temporal_),
+    SPEED_OPTION_USE_REF_DIFF(SpeedTemporalState, speed_temporal_use_ref_diff),
     { 0 }
 };
 
@@ -1462,13 +1274,13 @@ static int init(VmafFeatureExtractor *fex, enum VmafPixelFormat pix_fmt,
 
     size_t float_stride = s->speed_state.float_stride;
     size_t frame_size = float_stride * h;
-    s->frame_buffer_ref[0] = aligned_malloc(frame_size, 32);
-    s->frame_buffer_ref[1] = aligned_malloc(frame_size, 32);
-    s->frame_buffer_dis[0] = aligned_malloc(frame_size, 32);
-    s->frame_buffer_dis[1] = aligned_malloc(frame_size, 32);
+    s->cpu_frame_buffer_ref[0] = aligned_malloc(frame_size, 32);
+    s->cpu_frame_buffer_ref[1] = aligned_malloc(frame_size, 32);
+    s->cpu_frame_buffer_dis[0] = aligned_malloc(frame_size, 32);
+    s->cpu_frame_buffer_dis[1] = aligned_malloc(frame_size, 32);
 
-    if (!s->frame_buffer_ref[0] || !s->frame_buffer_ref[1] ||
-        !s->frame_buffer_dis[0] || !s->frame_buffer_dis[1])
+    if (!s->cpu_frame_buffer_ref[0] || !s->cpu_frame_buffer_ref[1] ||
+        !s->cpu_frame_buffer_dis[0] || !s->cpu_frame_buffer_dis[1])
     {
         return -ENOMEM;
     }
@@ -1493,13 +1305,13 @@ static int extract(VmafFeatureExtractor *fex,
     (void) ref_pic_90;
     (void) dist_pic_90;
 
-    s->index = index;
+    s->frame_index = index;
     int cyclic_index = index % 2;
     int other_index = (index + 1) % 2;
 
-    picture_copy(s->frame_buffer_ref[cyclic_index], s->speed_state.float_stride,
+    picture_copy(s->cpu_frame_buffer_ref[cyclic_index], s->speed_state.float_stride,
                  ref_pic, -128, ref_pic->bpc, 0);
-    picture_copy(s->frame_buffer_dis[cyclic_index], s->speed_state.float_stride,
+    picture_copy(s->cpu_frame_buffer_dis[cyclic_index], s->speed_state.float_stride,
                  dist_pic, -128, ref_pic->bpc, 0);
 
     if (index == 0) {
@@ -1512,19 +1324,19 @@ static int extract(VmafFeatureExtractor *fex,
     int w = s->speed_state.dimensions.original_width;
     int h = s->speed_state.dimensions.original_height;
     int float_stride = s->speed_state.float_stride;
-    subtract_image(s->frame_buffer_ref[other_index],
-                   s->frame_buffer_ref[cyclic_index], w, h, float_stride);
+    subtract_image(s->cpu_frame_buffer_ref[other_index],
+                   s->cpu_frame_buffer_ref[cyclic_index], w, h, float_stride);
     if (s->speed_temporal_use_ref_diff) {
-        subtract_image(s->frame_buffer_dis[other_index],
-                       s->frame_buffer_ref[cyclic_index], w, h, float_stride);
+        subtract_image(s->cpu_frame_buffer_dis[other_index],
+                       s->cpu_frame_buffer_ref[cyclic_index], w, h, float_stride);
     } else {
-        subtract_image(s->frame_buffer_dis[other_index],
-                       s->frame_buffer_dis[cyclic_index], w, h, float_stride);
+        subtract_image(s->cpu_frame_buffer_dis[other_index],
+                       s->cpu_frame_buffer_dis[cyclic_index], w, h, float_stride);
     }
     float score;
     speed_extract_score(&s->speed_state, &s->speed_options,
-                        s->frame_buffer_ref[other_index],
-                        s->frame_buffer_dis[other_index], &score);
+                        s->cpu_frame_buffer_ref[other_index],
+                        s->cpu_frame_buffer_dis[other_index], &score);
 
     err = vmaf_feature_collector_append_with_dict(
         feature_collector, s->feature_name_dict,
@@ -1539,28 +1351,23 @@ static int close(VmafFeatureExtractor *fex)
     SpeedTemporalState *s = fex->priv;
     speed_close(&s->speed_state);
 
-    if (s->frame_buffer_ref[0]) aligned_free(s->frame_buffer_ref[0]);
-    if (s->frame_buffer_ref[1]) aligned_free(s->frame_buffer_ref[1]);
-    if (s->frame_buffer_dis[0]) aligned_free(s->frame_buffer_dis[0]);
-    if (s->frame_buffer_dis[1]) aligned_free(s->frame_buffer_dis[1]);
+    if (s->cpu_frame_buffer_ref[0]) aligned_free(s->cpu_frame_buffer_ref[0]);
+    if (s->cpu_frame_buffer_ref[1]) aligned_free(s->cpu_frame_buffer_ref[1]);
+    if (s->cpu_frame_buffer_dis[0]) aligned_free(s->cpu_frame_buffer_dis[0]);
+    if (s->cpu_frame_buffer_dis[1]) aligned_free(s->cpu_frame_buffer_dis[1]);
 
     if (s->feature_name_dict)
         vmaf_dictionary_free(&s->feature_name_dict);
     return 0;
 }
 
-static const char *provided_features[] = {
-    "Speed_temporal_feature_speed_temporal_score",
-    NULL
-};
-
 VmafFeatureExtractor vmaf_fex_speed_temporal = {
     .name = "speed_temporal",
     .init = init,
     .extract = extract,
-    .options = options,
+    .options = options_temporal,
     .close = close,
     .priv_size = sizeof(SpeedTemporalState),
-    .provided_features = provided_features,
+    .provided_features = provided_features_temporal,
     .flags = VMAF_FEATURE_EXTRACTOR_TEMPORAL,
 };

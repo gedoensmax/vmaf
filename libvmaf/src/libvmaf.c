@@ -577,7 +577,7 @@ static int translate_picture_host(VmafContext *vmaf, VmafPicture *pic,
         if (!vmaf->cuda.state.ctx)
             return -EINVAL;
         err |= vmaf_ring_buffer_fetch_next_picture(vmaf->cuda.ring_buffer, pic_device);
-        err |= vmaf_cuda_picture_upload_async(pic_device, pic, 0x1);
+        err |= vmaf_cuda_picture_upload_async(pic_device, pic, 0xF);
         if (err) {
             vmaf_log(VMAF_LOG_LEVEL_ERROR,
                     "problem moving host pic into cuda device buffer\n");
@@ -607,7 +607,7 @@ static int translate_picture_device(VmafContext *vmaf, VmafPicture *pic,
         return err;
     }
 
-    err = vmaf_cuda_picture_download_async(pic, pic_host, 0x1);
+    err = vmaf_cuda_picture_download_async(pic, pic_host, 0xF);
     if (err) {
         vmaf_log(VMAF_LOG_LEVEL_ERROR,
                  "problem moving cuda pic into host buffer\n");
@@ -621,6 +621,7 @@ static int translate_picture(VmafContext *vmaf, VmafPicture *pic,
                              VmafPicture *pic_host, VmafPicture *pic_device,
                              unsigned hw_flags)
 {
+    // TODO: we need logic to upload uv if required for e.g. speed
     const VmafPicturePrivate *pic_priv = pic->priv;
 
     switch(pic_priv->buf_type) {
