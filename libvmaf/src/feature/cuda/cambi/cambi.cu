@@ -148,42 +148,71 @@ __device__ void decimate_and_filter_kernel(
     smem[ty][tx] = value;
 
 	// edges
-    if (threadIdx.x == 0 && j >= 0) {
-        smem[ty][0] = read_pixel<apply_decimation>(input, i, j - 1, in_stride);
+    if (threadIdx.x == 0) {
+        if (j > 0) {
+            smem[ty][0] = read_pixel<apply_decimation>(input, i, j - 1, in_stride);
+        } else {
+            smem[ty][0] = 0;
+        }
     }
-    if (threadIdx.x == blockDimX - 1 && j < out_width) {
-        smem[ty][tx + 1] = read_pixel<apply_decimation>(input, i, j + 1, in_stride);
+    if (threadIdx.x == blockDimX - 1) {
+        if (j < (in_width - 1)) {
+            smem[ty][tx + 1] = read_pixel<apply_decimation>(input, i, j + 1, in_stride);
+        } else {
+            smem[ty][tx + 1] = 0;
+        }
     }
-    if (threadIdx.y == 0 && i >= 0) {
-        smem[0][tx] = read_pixel<apply_decimation>(input, i - 1, j, in_stride);
+    if (threadIdx.y == 0) {
+        if (i > 0) {
+            smem[0][tx] = read_pixel<apply_decimation>(input, i - 1, j, in_stride);
+        } else {
+            smem[0][tx] = 0;
+        }
     }
-    if (threadIdx.y == blockDimY - 1 && i < out_height) {
-        smem[ty + 1][tx] = read_pixel<apply_decimation>(input, i + 1, j, in_stride);
+    if (threadIdx.y == blockDimY - 1) {
+        if (i < (in_height - 1)) {
+            smem[ty + 1][tx] = read_pixel<apply_decimation>(input, i + 1, j, in_stride);
+        } else {
+            smem[ty + 1][tx] = 0;
+        }
     }
 
 	// corners
 	// top left corner
-	if (threadIdx.x == 0 && threadIdx.y == 0 &&
-			j >= 0 && i >= 0) {
-        smem[0][0] = read_pixel<apply_decimation>(input, i - 1, j - 1, in_stride);
-    }
+	if (threadIdx.x == 0 && threadIdx.y == 0 ) {
+	    if (j > 0 && i > 0) {
+	        smem[0][0] = read_pixel<apply_decimation>(input, i - 1,
+                j - 1, in_stride);
+	    } else {
+	        smem[0][0] = 0;
+	    }
+	}
 	// top right corner
-	if (threadIdx.x == blockDimX - 1 && threadIdx.y == 0 &&
-			j < in_width && i >= 0) {
-        smem[0][tx + 1] = \
-			read_pixel<apply_decimation>(input, i - 1, j + 1, in_stride);
+	if (threadIdx.x == blockDimX - 1 && threadIdx.y == 0) {
+	    if (j < (in_width - 1) && i > 0) {
+	        smem[0][tx + 1] = \
+                read_pixel<apply_decimation>(input, i - 1, j + 1, in_stride);
+	    } else {
+	        smem[0][tx + 1] = 0;
+	    }
 	}
 	// bottom left corner
-	if (threadIdx.x == 0 && threadIdx.y == blockDimY - 1 &&
-			i < in_height && j >= 0) {
-        smem[ty + 1][0] = \
-			read_pixel<apply_decimation>(input, i + 1, j - 1, in_stride);
+	if (threadIdx.x == 0 && threadIdx.y == blockDimY - 1) {
+	    if (i < (in_height - 1) && j > 0) {
+	        smem[ty + 1][0] = \
+                read_pixel<apply_decimation>(input, i + 1, j - 1, in_stride);
+	    } else {
+	        smem[ty + 1][0] = 0;
+	    }
 	}
     // bottom right corner
-	if (threadIdx.x == blockDimX - 1 && threadIdx.y == blockDimY - 1 &&
-			j < out_width && i < out_height) {
-        smem[ty + 1][tx + 1] = \
-			read_pixel<apply_decimation>(input, i + 1, j + 1, in_stride);
+	if (threadIdx.x == blockDimX - 1 && threadIdx.y == blockDimY - 1) {
+	    if  (j < (in_width - 1) && i < (in_height - 1)) {
+	        smem[ty + 1][tx + 1] = \
+                read_pixel<apply_decimation>(input, i + 1, j + 1, in_stride);
+	    } else {
+	        smem[ty + 1][tx + 1] = 0;
+	    }
 	}
     __syncthreads();
 
@@ -230,37 +259,37 @@ extern "C" __global__ void decimate_kernel(
 extern "C" __global__ void calculate_derivate(const VmafPicture image,
     VmafCudaBuffer derivative_buffer,
     int width, int height) {
-    
+
     int j = blockIdx.x * blockDim.x + threadIdx.x;
     int i = blockIdx.y * blockDim.y + threadIdx.y;
-    
+
     if (i >= height || j >= width) return;
-    
+
     const uint16_t* __restrict__ image_data = (const uint16_t*)image.data[0];
     uint8_t* __restrict__ derivative_out = (uint8_t*)derivative_buffer.data;
-    
+
     int stride = image.stride[0] / sizeof(uint16_t);
-    
-    bool horizontal_equal = (j == width - 1) || 
+
+    bool horizontal_equal = (j == width - 1) ||
                            (image_data[i * stride + j] == image_data[i * stride + j + 1]);
-    
-    bool vertical_equal = (i == height - 1) || 
+
+    bool vertical_equal = (i == height - 1) ||
                          (image_data[i * stride + j] == image_data[(i + 1) * stride + j]);
-    
+
     derivative_out[i * width + j] = (horizontal_equal && vertical_equal);
 }
 
 extern "C" __global__ void calculate_spatial_mask(VmafPicture mask, VmafCudaBuffer derivative_buffer,
                                                   int width, int height, uint16_t mask_index) {
-    
+
     int j = blockIdx.x * blockDim.x + threadIdx.x;
     int i = blockIdx.y * blockDim.y + threadIdx.y;
-    
+
     if (i >= height || j >= width) return;
-    
+
     uint8_t* __restrict__ derivative = (uint8_t*)derivative_buffer.data;
     uint16_t* __restrict__ mask_data = (uint16_t*)mask.data[0];
-    
+
     int mask_stride = mask.stride[0] / sizeof(uint16_t);
 
     constexpr int pad_size = MASK_FILTER_SIZE >> 1;
